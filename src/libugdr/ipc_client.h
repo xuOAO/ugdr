@@ -1,15 +1,14 @@
 #pragma once
-#include <string>
 #include "ugdr_internal.h"
 #include "../common/ipc/socket_utils.h"
+#include "../common/ipc/ipc_proto.h"
 
 namespace ugdr{
 namespace lib{
 
 class IpcClient {
 public:
-    static struct ::ugdr_context connect_and_handshake(const std::string& dev_name);
-    static bool close(struct ugdr_context* ctx);
+    static void sendReqAndHandleRsp(int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp, int* out_fd = nullptr);
 };
 
 }

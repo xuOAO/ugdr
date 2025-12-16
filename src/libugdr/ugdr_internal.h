@@ -4,6 +4,5 @@
 
 struct ugdr_context {
     ugdr::ipc::Socket sock;
-    uint32_t ctx_idx;
     char dev_name[ugdr::common::UGDR_MAX_DEV_NAME_LEN];
 };

@@ -1,10 +1,8 @@
-#include <bits/stdint-uintn.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include "ipc_server.h"
 #include "../../common/logger.h"
-#include "../../common/ipc/ipc_proto.h"
 #include "manager.h"
 
 namespace ugdr{
@@ -14,7 +12,6 @@ constexpr int MAX_EVENTS = 128;
 
 IpcServer::IpcServer(std::string uds_path, Manager* manager)
     : uds_path_(uds_path), manager_(manager) {
-    events_.reserve(MAX_EVENTS);
 }
 
 IpcServer::~IpcServer() = default;
@@ -48,114 +45,109 @@ void IpcServer::handle_new_connect() {
         ::close(client_fd);
         return;
     }
-    events_.push_back(ev);
+}
+
+bool IpcServer::handleOpenDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    bool ret = true;
+    Ctx* ctx;
+
+    // 1.handle
+    ctx = server->manager_->get_ctx(std::string(req.open_dev_req.dev_name));
+    if (ctx == nullptr){
+        UGDR_LOG_INFO("[Server]: client %d open device failed, unknown device name: %s", client_fd, req.open_dev_req.dev_name);
+        status = -1;
+        ret = false;
+    } else{
+        server->client_ctx_map_[client_fd] = ctx;
+    }
+
+    // 2.build response
+    rsp = {
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_OPEN_DEVICE,
+            .status = status,
+        },
+        .open_dev_rsp = {
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d open device %s, status= %d", client_fd, req.open_dev_req.dev_name, status);
+    return ret;
+}
+
+bool IpcServer::handleCloseDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    bool ret = false; // 默认返回false，断开连接
+
+    // 直接返回false，断开连接
+    rsp = {
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_CLOSE_DEVICE,
+            .status = status,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d close device", client_fd);
+    return ret;
+}
+
+bool IpcServer::handleUnknownCmd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    UGDR_LOG_INFO("[Server]: Unknown cmd: %d", static_cast<uint32_t>(req.header.cmd));
+    return true;
+}
+
+IpcServer::CmdHandler IpcServer::cmdToHandler(ipc::Cmd cmd) {
+    switch(cmd) {
+        case ipc::Cmd::UGDR_CMD_OPEN_DEVICE: return handleOpenDevice;
+        case ipc::Cmd::UGDR_CMD_CLOSE_DEVICE: return handleCloseDevice;
+        default: return handleUnknownCmd;
+    }
 }
 
 bool IpcServer::handle_client_msg(int client_fd) {
-//TODO:handle的输出可以考虑格式化后，单独写一个inline函数
     try{
-        struct ipc::Header header;
+        bool ret = true;
+        ssize_t n = 0;
+        struct ipc::ugdr_request req;
+        struct ipc::ugdr_response rsp;
 
-        //TODO:MSG_WAITALL可能存在问题，需调研
-        ssize_t n = ::recv(client_fd, &header, sizeof(header), MSG_WAITALL);
-
-        if (n == 0) return false;
-        if (n < 0) return false;
+        // 1.recv request
+        n = ::recv(client_fd, &req, sizeof(req), MSG_WAITALL);
         //TODO:数据包破碎，暂不处理
-        if (n != sizeof(header)) return true;
+        if (n < sizeof(req)) throw std::runtime_error("Failed to receive request from client");
 
-        if (header.magic != ipc::UGDR_PROTO_MAGIC) return false;
+        // 2.handle request and produce response
+        if (req.header.magic != ipc::UGDR_PROTO_MAGIC) return false;
+        CmdHandler handler = cmdToHandler(req.header.cmd);
+        ret = handler(this, client_fd, req, rsp);
 
-        switch (header.cmd) {
-            case ipc::Cmd::UGDR_CMD_INIT:{
-                //返回ctx
-                ipc::DeviceName payload;
-                //TODO:MSG_WAITALL可能存在问题，需调研
-                ::recv(client_fd, &payload, sizeof(payload), MSG_WAITALL);
-                UGDR_LOG_INFO("[Server]: RECV_CMD: %s, eth_name= %s", ipc::CmdStr[static_cast<int>(header.cmd)], payload.name);
+        // 3.send response
+        n = ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
+        if (n < sizeof(rsp)) throw std::runtime_error("Failed to send response to client");
 
-                std::string dev_name(payload.name);
-                //TODO: 补充错误处理逻辑
-                uint32_t ctx_idx = manager_->get_ctx(dev_name);
-                struct ipc::InitRsp rsp = {
-                    .header = {
-                        .cmd = ipc::Cmd::UGDR_CMD_RESP,
-                        .payload_len = sizeof(rsp.ctx_idx),
-                    },
-                    .ctx_idx = ctx_idx,
-                };
-                //TODO:MSG_WAITALL可能存在问题，需调研
-                ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
-                UGDR_LOG_INFO("[Server]: SEND_CMD: %s, ctx_idx= %d", ipc::CmdStr[static_cast<int>(rsp.header.cmd)], ctx_idx);
-
-                break;
-            }    
-            case ipc::Cmd::UGDR_CMD_EXIT:{
-                UGDR_LOG_INFO("[Server]: RECV_CMD: %s", ipc::CmdStr[static_cast<int>(header.cmd)]);
-                //直接返回false，断开连接
-                ipc::ExitRsp rsp = {
-                    .header = {
-                        .cmd = ipc::Cmd::UGDR_CMD_RESP,
-                        .payload_len = 0,
-                    },
-                };
-                //TODO:MSG_WAITALL可能存在问题，需调研
-                ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
-                UGDR_LOG_INFO("[Server]: SEND_CMD: %s", ipc::CmdStr[static_cast<int>(rsp.header.cmd)]);
-                
-                return false;
-                break;
-            }
-            // case ipc::Cmd::UGDR_CMD_ALLOC_PD:{
-            //     uint32_t ctx_idx = 0;
-            //     //TODO: MSG_WAITALL可能存在问题，需调研
-            //     ::recv(client_fd, &ctx_idx, sizeof(ctx_idx), MSG_WAITALL);
-            //     //TODO:补充错误处理逻辑
-            //     uint32_t pd_idx = manager_->alloc_pd(ctx_idx);
-            //     struct ipc::AllocPdRsp rsp = {
-            //         .header = {
-            //             .cmd = ipc::Cmd::UGDR_CMD_ALLOC_PD,
-            //             .payload_len = sizeof(rsp.pd_idx),
-            //         },
-            //         .pd_idx = pd_idx,
-            //     };
-            //     //TODO:MSG_WAITALL可能存在问题，需调研
-            //     ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
-            //     UGDR_LOG_INFO("[Server]: SEND_CMD: %s, pd_idx= %d", ipc::CmdStr[static_cast<int>(rsp.header.cmd)], pd_idx);
-
-            //     break;
-            // }
-            // case ipc::Cmd::UGDR_CMD_DEALLOC_PD:{
-            //     int ret = 0;
-            //     struct ipc::PdReqPayload payload;
-            //     //TODO: MSG_WAITALL可能存在问题，需调研
-            //     ::recv(client_fd, &payload, sizeof(payload), MSG_WAITALL);
-            //     //TODO:补充错误处理逻辑
-            //     ret = manager_->dealloc_pd(payload.ctx_idx, payload.pd_idx);
-            //     if (ret != 0) {
-            //         UGDR_LOG_INFO("[Server]: dealloc_pd failed: %s", strerror(ret));
-            //     }
-            //     struct ipc::DeallocPdRsp rsp = {
-            //         .header = {
-            //             .cmd = ipc::Cmd::UGDR_CMD_DEALLOC_PD,
-            //             .payload = sizeof(rsp.ret),
-            //         }
-            //         .ret = ret,
-            //     };
-            //     //TODO:MSG_WAITALL可能存在问题，需调研
-            //     ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
-            //     UGDR_LOG_INFO("[Server]: SEND_CMD: %s, ret= %d", ipc::CmdStr[static_cast<int>(rsp.header.cmd)], ret);
-
-            //     break;
-            // }
-            default:
-                UGDR_LOG_INFO("[Server]: Unknown cmd: %d", header.cmd);
-                break;
-        }
-    }
-    catch(const std::exception& e){
+        return ret;
+    } catch(const std::exception& e){
         UGDR_LOG_ERROR("[Server]: Error: %s", e.what());
         return false;
+    }
+}
+
+void IpcServer::cleanup_client(int client_fd) {
+    UGDR_LOG_DEBUG("[Server]: Cleaning up client fd: %d", client_fd);
+    // 1. 从 epoll 实例中删除
+    if (::epoll_ctl(epoll_fd_.get_fd(), EPOLL_CTL_DEL, client_fd, nullptr) < 0) {
+        UGDR_LOG_ERROR("[Server]: epoll_ctl(DEL) failed for fd %d: %s", client_fd, strerror(errno));
+    }
+
+    // 2. 关闭文件描述符
+    ::close(client_fd);
+
+    // 3. 从客户上下文字典中删除
+    if (client_ctx_map_.erase(client_fd) > 0) {
+        UGDR_LOG_DEBUG("[Server]: Cleaned up context for disconnected client fd: %d", client_fd);
     }
 }
 
@@ -174,26 +166,41 @@ void IpcServer::run_loop() {
     ev.events = EPOLLIN;
     ev.data.fd = server_socket_.get_fd();
     if(::epoll_ctl(epoll_fd_.get_fd(), EPOLL_CTL_ADD, server_socket_.get_fd(), &ev) < 0){
-        throw std::runtime_error("epoll_ctl failed");
+        throw std::runtime_error("epoll_ctl failed for server socket");
     }
 
-    running_ = true;
-    events_.push_back(ev);
+    // 4. 创建一个固定的、用于接收epoll_wait结果的数组
+    struct epoll_event triggered_events[MAX_EVENTS];
 
+    running_ = true;
     while(running_) {
-        int n = epoll_wait(epoll_fd_.get_fd(), events_.data(), events_.size(), -1);
+        int n = epoll_wait(epoll_fd_.get_fd(), triggered_events, MAX_EVENTS, -1);
         if (n < 0){
             if (errno == EINTR) continue;
+            UGDR_LOG_ERROR("[Server]: epoll_wait failed: %s", strerror(errno));
             break;
         }
 
-        for (struct epoll_event& ev : events_) {
-            if (ev.data.fd == server_socket_.get_fd()){
+        for (int i = 0; i < n; ++i) {
+            struct epoll_event& current_event = triggered_events[i];
+            int current_fd = current_event.data.fd;
+
+            if (current_fd == server_socket_.get_fd()){
                 handle_new_connect();
-            }
-            else{
-                if (!handle_client_msg(ev.data.fd)){
-                    ::close(ev.data.fd);
+            } else {
+                // 检查错误或断开连接事件
+                if ((current_event.events & EPOLLERR) || (current_event.events & EPOLLHUP)) {
+                    UGDR_LOG_INFO("[Server]: Client fd %d disconnected or encountered an error.", current_fd);
+                    cleanup_client(current_fd);
+                    continue;
+                }
+
+                // 处理可读事件
+                if (current_event.events & EPOLLIN) {
+                    if (!handle_client_msg(current_fd)){
+                        // 业务逻辑要求断开连接 (例如 handleCloseDevice)
+                        cleanup_client(current_fd);
+                    }
                 }
             }
         }

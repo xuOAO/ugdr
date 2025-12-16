@@ -15,7 +15,7 @@ public:
     ~Manager();
     // void init();
     void run();
-    uint32_t get_ctx(const std::string& eth_name);
+    Ctx* get_ctx(const std::string& eth_name);
     // uint32_t alloc_pd(uint32_t ctx_idx);
     // uint32_t dealloc_pd(uint32_t ctx_idx, uint32_t pd_idx);
 private:
@@ -24,7 +24,7 @@ private:
 
     uint32_t nb_ctxs_ = 0;
     std::vector<std::unique_ptr<Ctx>> ctxs_;
-    std::unordered_map<std::string, uint32_t> eth_name_to_ctx_idx_;
+    std::unordered_map<std::string, Ctx*> eth_to_ctx_;
 };
 
 }
