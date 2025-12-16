@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include "ipc_server.h"
 #include "../../common/logger.h"
 #include "manager.h"
@@ -94,6 +95,72 @@ bool IpcServer::handleCloseDevice(IpcServer* server, int client_fd, struct ipc::
     return ret;
 }
 
+bool IpcServer::handleAllocPd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    uint32_t pd_handle = 0;
+    bool ret = true;
+
+    // 1.handle
+    auto it = server->client_ctx_map_.find(client_fd);
+    if (it == server->client_ctx_map_.end()){
+        UGDR_LOG_INFO("[Server]: client %d alloc pd failed, no context", client_fd);
+        status = -1;
+        ret = false;
+    } else{
+        Ctx* ctx = it->second;
+        pd_handle = ctx->alloc_pd();
+    }
+
+    // 2.build response
+    rsp = {
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_ALLOC_PD,
+            .status = status,
+        },
+        .alloc_pd_rsp = {
+            .pd_handle = pd_handle,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d alloc pd, status= %d, pd_handle= %u", client_fd, status, pd_handle);
+    return ret;
+}
+
+bool IpcServer::handleDeallocPd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    bool ret = true;
+    uint32_t pd_handle = 0;
+
+    // 1.handle
+    auto it = server->client_ctx_map_.find(client_fd);
+    if (it == server->client_ctx_map_.end()){
+        UGDR_LOG_INFO("[Server]: client %d dealloc pd failed, no context", client_fd);
+        status = -1;
+        ret = false;
+    } else{
+        Ctx* ctx = it->second;
+        pd_handle = req.destroy_rsrc_req.handle.pd_handle;
+        if (ctx->dealloc_pd(pd_handle) != 0){
+            UGDR_LOG_INFO("[Server]: client %d dealloc pd failed, invalid pd_handle= %u", client_fd, pd_handle);
+            status = -1;
+            ret = false;
+        }
+    }
+
+    // 2.build response
+    rsp = {
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_DEALLOC_PD,
+            .status = status,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d dealloc pd = %d, status= %d", client_fd, pd_handle, status);
+    return ret;
+}
+
 bool IpcServer::handleUnknownCmd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     UGDR_LOG_INFO("[Server]: Unknown cmd: %d", static_cast<uint32_t>(req.header.cmd));
     return true;
@@ -103,6 +170,8 @@ IpcServer::CmdHandler IpcServer::cmdToHandler(ipc::Cmd cmd) {
     switch(cmd) {
         case ipc::Cmd::UGDR_CMD_OPEN_DEVICE: return handleOpenDevice;
         case ipc::Cmd::UGDR_CMD_CLOSE_DEVICE: return handleCloseDevice;
+        case ipc::Cmd::UGDR_CMD_ALLOC_PD: return handleAllocPd;
+        case ipc::Cmd::UGDR_CMD_DEALLOC_PD: return handleDeallocPd;
         default: return handleUnknownCmd;
     }
 }

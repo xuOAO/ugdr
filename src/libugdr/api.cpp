@@ -70,3 +70,64 @@ int ugdr_close_device(struct ugdr_context* ctx){
         return -1;
     }
 }
+
+struct ugdr_pd* ugdr_alloc_pd(struct ugdr_context* ctx){
+    if (ctx == nullptr) return nullptr;
+    try {
+        // 1. build request
+        struct ugdr::ipc::ugdr_request req;
+        struct ugdr::ipc::ugdr_response rsp;
+
+        req = {
+            .header = {
+                .magic = ugdr::ipc::UGDR_PROTO_MAGIC,
+                .cmd = ugdr::ipc::Cmd::UGDR_CMD_ALLOC_PD,
+                .status = 0,
+            },
+        };
+
+        // 2. send req and handle rsp
+        ugdr::lib::IpcClient::sendReqAndHandleRsp(ctx->sock.get_fd(), req, rsp);
+
+        // 3. posthandle: create ugdr_pd and return
+        struct ugdr_pd* pd = new struct ugdr_pd();
+        pd->sock_ptr = &ctx->sock;
+        pd->pd_handle = rsp.alloc_pd_rsp.pd_handle;
+        return pd;
+    } catch(const std::exception& e){
+        UGDR_LOG_ERROR("[Client]: Failed to alloc pd on device %s: %s", ctx->dev_name, e.what());
+        return nullptr;
+    }
+}
+
+int ugdr_dealloc_pd(struct ugdr_context* ctx, struct ugdr_pd* pd){
+    if (ctx == nullptr || pd == nullptr) return -1;
+    try {
+        // 1. build request
+        struct ugdr::ipc::ugdr_request req;
+        struct ugdr::ipc::ugdr_response rsp;
+
+        req = {
+            .header = {
+                .magic = ugdr::ipc::UGDR_PROTO_MAGIC,
+                .cmd = ugdr::ipc::Cmd::UGDR_CMD_DEALLOC_PD,
+                .status = 0,
+            },
+            .destroy_rsrc_req= {
+                .handle = {
+                    .pd_handle = pd->pd_handle,
+                },
+            },
+        };
+
+        // 2. send req and handle rsp
+        ugdr::lib::IpcClient::sendReqAndHandleRsp(ctx->sock.get_fd(), req, rsp);
+
+        // 3. posthandle: free pd
+        delete pd;
+        return 0;
+    } catch(const std::exception& e){
+        UGDR_LOG_ERROR("[Client]: Failed to dealloc pd on device %s: %s", ctx->dev_name, e.what());
+        return -1;
+    }
+}

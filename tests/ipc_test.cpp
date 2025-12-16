@@ -11,7 +11,9 @@ int main(){
         fflush(stdout);
         struct ugdr_context* ctx = ugdr_open_device("eth0");
         if (ctx){
+            struct ugdr_pd* pd = ugdr_alloc_pd(ctx);
             usleep(10000); // sleep 10ms to simulate some work
+            ugdr_dealloc_pd(ctx, pd);
             ugdr_close_device(ctx);
         } else{
             printf("\nFailed to open device eth0 on loop %d\n", i + 1);
