@@ -5,4 +5,5 @@
 *.lo
 *.la
 
+.vscode
 build/

@@ -1,6 +1,7 @@
 #pragma once
 #include <bits/stdint-uintn.h>
 #include <cstdint>
+#include <cstddef>
 #include "../ugdr_types.h"
 
 namespace ugdr{
@@ -20,6 +21,8 @@ enum class Cmd : uint32_t {
     UGDR_CMD_DESTROY_QP,
     UGDR_CMD_REG_MR,
     UGDR_CMD_DEREG_MR,
+    //experimental cmds
+    UGDR_CMD_EXPERIMENTAL = 1000,
 };
 
 constexpr const char* cmdToString(Cmd cmd) {
@@ -35,6 +38,9 @@ constexpr const char* cmdToString(Cmd cmd) {
         case Cmd::UGDR_CMD_DESTROY_QP: return "UGDR_CMD_DESTROY_QP";
         case Cmd::UGDR_CMD_REG_MR: return "UGDR_CMD_REG_MR";
         case Cmd::UGDR_CMD_DEREG_MR: return "UGDR_CMD_DEREG_MR";
+        //experimental cmds
+        case Cmd::UGDR_CMD_EXPERIMENTAL: return "UGDR_CMD_EXPERIMENTAL";
+        default: return "UNKNOWN_CMD";
     }
 }
 
@@ -58,6 +64,8 @@ struct ugdr_create_cq_req {
 };
 
 struct ugdr_create_cq_rsp {
+    char shring_name[common::UGDR_MAX_SHRING_NAME_LEN];
+    size_t shring_size;
     uint32_t cq_handle;
 };
 
@@ -68,7 +76,7 @@ struct ugdr_create_qp_req {
         uint32_t recv_cq_handle;
         struct {
             uint32_t max_send_wr;
-            uint32_t max_recv_mr;
+            uint32_t max_recv_wr;
             uint32_t max_sge; // 目前默认 max_sge = 1
         } cap;
         int qp_type; // 目前默认 qp_type = rc
@@ -79,6 +87,10 @@ struct ugdr_create_qp_req {
 //TODO：应该返回很多qp属性
 struct ugdr_create_qp_rsp {
     uint32_t qp_handle;
+    char rq_name[common::UGDR_MAX_SHRING_NAME_LEN];
+    char sq_name[common::UGDR_MAX_SHRING_NAME_LEN];
+    size_t rq_size;
+    size_t sq_size;
 };
 
 struct ugdr_modify_qp_req {
@@ -122,6 +134,16 @@ struct ugdr_destroy_rsrc_req {
 struct ugdr_destroy_rsrc_rsp {
 };
 
+struct ugdr_experimental_req {
+    // experimental fields
+    int data;
+};
+
+struct ugdr_experimental_rsp {
+    // experimental fields
+    int data;
+};
+
 struct ugdr_cmd_header {
     uint32_t magic;
     Cmd cmd;
@@ -137,6 +159,8 @@ struct ugdr_request {
         struct ugdr_create_qp_req create_qp_req;
         struct ugdr_modify_qp_req modify_qp_req;
         struct ugdr_destroy_rsrc_req destroy_rsrc_req;
+        // experimental cmds
+        struct ugdr_experimental_req experimental_req;
     };
 };
 
@@ -149,37 +173,10 @@ struct ugdr_response {
         struct ugdr_create_qp_rsp create_qp_rsp;
         struct ugdr_modify_qp_rsp modify_qp_rsp;
         struct ugdr_destroy_rsrc_rsp destroy_rsrc_rsp;
+        // experimental cmds
+        struct ugdr_experimental_rsp experimental_rsp;
     };
 };
-
-// struct DeviceName {
-//     char name[common::UGDR_MAX_DEV_NAME_LEN];
-// };
-
-// struct Header {
-//     uint32_t magic = UGDR_PROTO_MAGIC;
-//     Cmd cmd;
-//     uint32_t payload_len;
-// };
-
-
-// struct InitReq {
-//     Header header;
-//     DeviceName device_name;
-// };
-
-// struct InitRsp {
-//     Header header;
-//     uint32_t ctx_idx;
-// };
-
-// struct ExitReq {
-//     Header header;
-// };
-
-// struct ExitRsp {
-//     Header header;
-// };
 
 }
 }

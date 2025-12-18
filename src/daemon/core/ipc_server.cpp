@@ -2,6 +2,7 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include "ctx.h"
 #include "ipc_server.h"
 #include "../../common/logger.h"
 #include "manager.h"
@@ -16,6 +17,14 @@ IpcServer::IpcServer(std::string uds_path, Manager* manager)
 }
 
 IpcServer::~IpcServer() = default;
+
+Ctx* IpcServer::get_ctx(int client_fd) {
+    auto it = client_ctx_map_.find(client_fd);
+    if (it == client_ctx_map_.end()) {
+        return nullptr;
+    }
+    return it->second;
+}
 
 void IpcServer::set_non_blocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
@@ -48,9 +57,9 @@ void IpcServer::handle_new_connect() {
     }
 }
 
-bool IpcServer::handleOpenDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+int IpcServer::handleOpenDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     int status = 0;
-    bool ret = true;
+    int ret = NORMAL_SEND;
     Ctx* ctx;
 
     // 1.handle
@@ -58,13 +67,13 @@ bool IpcServer::handleOpenDevice(IpcServer* server, int client_fd, struct ipc::u
     if (ctx == nullptr){
         UGDR_LOG_INFO("[Server]: client %d open device failed, unknown device name: %s", client_fd, req.open_dev_req.dev_name);
         status = -1;
-        ret = false;
+        ret = CLOSE_SOCK;
     } else{
         server->client_ctx_map_[client_fd] = ctx;
     }
 
     // 2.build response
-    rsp = {
+    rsp = ipc::ugdr_response{
         .header = {
             .magic = ipc::UGDR_PROTO_MAGIC,
             .cmd = ipc::Cmd::UGDR_CMD_OPEN_DEVICE,
@@ -78,12 +87,12 @@ bool IpcServer::handleOpenDevice(IpcServer* server, int client_fd, struct ipc::u
     return ret;
 }
 
-bool IpcServer::handleCloseDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+int IpcServer::handleCloseDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     int status = 0;
-    bool ret = false; // 默认返回false，断开连接
+    int ret = CLOSE_SOCK; // 默认返回false，断开连接
 
     // 直接返回false，断开连接
-    rsp = {
+    rsp = ipc::ugdr_response{
         .header = {
             .magic = ipc::UGDR_PROTO_MAGIC,
             .cmd = ipc::Cmd::UGDR_CMD_CLOSE_DEVICE,
@@ -95,24 +104,24 @@ bool IpcServer::handleCloseDevice(IpcServer* server, int client_fd, struct ipc::
     return ret;
 }
 
-bool IpcServer::handleAllocPd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+int IpcServer::handleAllocPd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     int status = 0;
     uint32_t pd_handle = 0;
-    bool ret = true;
+    int ret = NORMAL_SEND;
+    Ctx* ctx;
 
     // 1.handle
-    auto it = server->client_ctx_map_.find(client_fd);
-    if (it == server->client_ctx_map_.end()){
+    ctx = server->get_ctx(client_fd);
+    if(ctx == nullptr) {
         UGDR_LOG_INFO("[Server]: client %d alloc pd failed, no context", client_fd);
         status = -1;
-        ret = false;
-    } else{
-        Ctx* ctx = it->second;
-        pd_handle = ctx->alloc_pd();
+        ret = CLOSE_SOCK;
+    } else {
+        pd_handle = ctx->alloc_pd(); 
     }
 
     // 2.build response
-    rsp = {
+    rsp = ipc::ugdr_response{
         .header = {
             .magic = ipc::UGDR_PROTO_MAGIC,
             .cmd = ipc::Cmd::UGDR_CMD_ALLOC_PD,
@@ -127,29 +136,30 @@ bool IpcServer::handleAllocPd(IpcServer* server, int client_fd, struct ipc::ugdr
     return ret;
 }
 
-bool IpcServer::handleDeallocPd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+int IpcServer::handleDeallocPd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     int status = 0;
-    bool ret = true;
+    int ret = NORMAL_SEND;
     uint32_t pd_handle = 0;
+    Ctx* ctx;
 
     // 1.handle
-    auto it = server->client_ctx_map_.find(client_fd);
-    if (it == server->client_ctx_map_.end()){
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
         UGDR_LOG_INFO("[Server]: client %d dealloc pd failed, no context", client_fd);
         status = -1;
-        ret = false;
-    } else{
-        Ctx* ctx = it->second;
+        ret = CLOSE_SOCK;
+    } else {
         pd_handle = req.destroy_rsrc_req.handle.pd_handle;
         if (ctx->dealloc_pd(pd_handle) != 0){
             UGDR_LOG_INFO("[Server]: client %d dealloc pd failed, invalid pd_handle= %u", client_fd, pd_handle);
             status = -1;
-            ret = false;
+            ret = CLOSE_SOCK;
         }
+
     }
 
     // 2.build response
-    rsp = {
+    rsp = ipc::ugdr_response{
         .header = {
             .magic = ipc::UGDR_PROTO_MAGIC,
             .cmd = ipc::Cmd::UGDR_CMD_DEALLOC_PD,
@@ -161,9 +171,202 @@ bool IpcServer::handleDeallocPd(IpcServer* server, int client_fd, struct ipc::ug
     return ret;
 }
 
-bool IpcServer::handleUnknownCmd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+int IpcServer::handleCreateCq(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    int ret = NO_OPERATION;
+    uint32_t cq_handle = 0;
+    ssize_t n = 0;
+    Ctx* ctx = nullptr;
+    //TODO: 未来需要替换成 ShmRing 类
+    struct shmring_attr shmring_attr;
+
+    // 1.handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d create cq failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        cq_handle = ctx->create_cq(req.create_cq_req.cqe, &shmring_attr);
+        //TODO: 未来需要替换成 ShmRing 类
+        if (shmring_attr.fd < 0) {
+            UGDR_LOG_INFO("[Server]: client %d create cq failed", client_fd);
+            status = -1;
+            ret = CLOSE_SOCK;
+        }
+
+    }
+
+    // 2.build response
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_CREATE_CQ,
+            .status = status,
+        },
+        .create_cq_rsp = {
+            //TODO: 未来需要替换成 ShmRing 类
+            .shring_size = shmring_attr.ring_size, 
+            .cq_handle = cq_handle,
+        },
+    };
+    strncpy(rsp.create_cq_rsp.shring_name, shmring_attr.ring_name.c_str(), sizeof(rsp.create_cq_rsp.shring_name)-1);
+
+    // 3.send response with fd
+    std::vector<int> fds = {shmring_attr.fd};
+    if (ret == NO_OPERATION) {
+        n = ipc::send_rsp_with_fds(client_fd, &rsp, sizeof(rsp), fds);
+        if (n < sizeof(rsp)) {
+            ctx->destroy_cq(cq_handle);
+            throw std::runtime_error("Failed to send create_cq response with fd to client");
+        }
+    }
+
+    UGDR_LOG_INFO("[Server]: client %d create cq, status= %d, cq_handle= %u", client_fd, status, cq_handle);
+    return ret;
+}
+
+int IpcServer::handleDestroyCq(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){ 
+    int status = 0;
+    int ret = NORMAL_SEND;
+    Ctx* ctx = nullptr;
+
+    // 1.handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d destroy cq failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        if (ctx->destroy_cq(req.destroy_rsrc_req.handle.cq_handle) != 0) {
+            throw std::runtime_error("Failed to destroy cq");
+        }
+    }
+
+    // 2.build response
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_DESTROY_CQ,
+            .status = status,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d destroy cq, status= %d", client_fd, status);
+    return ret;
+}
+
+int IpcServer::handleCreateQp(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){ 
+    int status = 0;
+    int ret = NO_OPERATION;
+    ssize_t n = 0;
+    uint32_t qp_handle = 0;
+    int rq_fd = -1;
+    int sq_fd = -1;
+    ipc::Shmem* rq_shm = nullptr;
+    ipc::Shmem* sq_shm = nullptr;
+    Ctx* ctx = nullptr;
+    Pd* pd = nullptr;
+
+    // 1.handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d create qp failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        pd = ctx->get_pd(req.create_qp_req.pd_handle);
+        if (pd == nullptr) {
+            UGDR_LOG_INFO("[Server]: client %d create qp failed, no pd", client_fd);
+            status = -1;
+            ret = CLOSE_SOCK;
+        } else {
+            // {qp_handle, rq_shm, sq_shm} = pd->create_qp(/* add arguments here */);
+            struct qp_init_attr qp_init_attr = {
+                .send_cq_handle = req.create_qp_req.qp_attr.send_cq_handle,
+                .recv_cq_handle = req.create_qp_req.qp_attr.recv_cq_handle,
+                .max_send_wr = req.create_qp_req.qp_attr.cap.max_send_wr,
+                .max_recv_wr = req.create_qp_req.qp_attr.cap.max_recv_wr,
+                .qp_type = req.create_qp_req.qp_attr.qp_type,
+                .sq_sig_all = req.create_qp_req.qp_attr.sq_sig_all
+            };
+            //qp_handle = pd->create_qp(qp_init_attr, &rq_fd, &sq_fd);
+        }
+    }
+
+    // 2.build response
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_CREATE_QP,
+            .status = status,
+        },
+        .create_qp_rsp = {
+            .qp_handle = qp_handle,
+        },
+    };
+
+    // 3.send response with fds
+
+    return ret;
+}
+
+int IpcServer::handleDestroyQp(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    int ret = NORMAL_SEND;
+    Ctx* ctx = nullptr;
+
+    // 1.handle
+    // 2.build response
+
+    return ret;
+}
+
+int IpcServer::handleUnknownCmd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     UGDR_LOG_INFO("[Server]: Unknown cmd: %d", static_cast<uint32_t>(req.header.cmd));
-    return true;
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = req.header.cmd,
+            .status = -1,
+        },
+    };
+    return CLOSE_SOCK;
+}
+
+int IpcServer::handleExperimental(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    int ret = NORMAL_SEND;
+    int data = 0;
+    Ctx* ctx = nullptr;
+    ipc::Shmem* shm = nullptr;
+
+    // 1.handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d experimental cmd failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        // read data from Shmem
+        shm = ctx->get_cq_shmem(static_cast<uint32_t>(req.experimental_req.data));
+        shm->read(&data, sizeof(data));
+    }
+
+    // 2.build response
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_EXPERIMENTAL,
+            .status = status,
+        },
+        .experimental_rsp = {
+            .data = data,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d experimental cmd, status= %d, data= %d", client_fd, status, data);
+    return ret;
 }
 
 IpcServer::CmdHandler IpcServer::cmdToHandler(ipc::Cmd cmd) {
@@ -172,6 +375,12 @@ IpcServer::CmdHandler IpcServer::cmdToHandler(ipc::Cmd cmd) {
         case ipc::Cmd::UGDR_CMD_CLOSE_DEVICE: return handleCloseDevice;
         case ipc::Cmd::UGDR_CMD_ALLOC_PD: return handleAllocPd;
         case ipc::Cmd::UGDR_CMD_DEALLOC_PD: return handleDeallocPd;
+        case ipc::Cmd::UGDR_CMD_CREATE_CQ: return handleCreateCq;
+        case ipc::Cmd::UGDR_CMD_DESTROY_CQ: return handleDestroyCq;
+        case ipc::Cmd::UGDR_CMD_CREATE_QP: return handleCreateQp;
+        case ipc::Cmd::UGDR_CMD_DESTROY_QP: return handleDestroyQp;
+        //experimental cmds
+        case ipc::Cmd::UGDR_CMD_EXPERIMENTAL: return handleExperimental;
         default: return handleUnknownCmd;
     }
 }
@@ -180,6 +389,7 @@ bool IpcServer::handle_client_msg(int client_fd) {
     try{
         bool ret = true;
         ssize_t n = 0;
+        int operation = NO_OPERATION;
         struct ipc::ugdr_request req;
         struct ipc::ugdr_response rsp;
 
@@ -191,11 +401,30 @@ bool IpcServer::handle_client_msg(int client_fd) {
         // 2.handle request and produce response
         if (req.header.magic != ipc::UGDR_PROTO_MAGIC) return false;
         CmdHandler handler = cmdToHandler(req.header.cmd);
-        ret = handler(this, client_fd, req, rsp);
+        operation = handler(this, client_fd, req, rsp);
 
-        // 3.send response
-        n = ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
-        if (n < sizeof(rsp)) throw std::runtime_error("Failed to send response to client");
+        // 3.do post operation
+        switch (operation) {
+            case NORMAL_SEND:
+                // 正常发送响应
+                n = ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
+                if (n < sizeof(rsp)) throw std::runtime_error("Failed to send response to client");
+                ret = true;
+                break;
+            case CLOSE_SOCK:
+                n = ::send(client_fd, &rsp, sizeof(rsp), MSG_WAITALL);
+                if (n < sizeof(rsp)) throw std::runtime_error("Failed to send response to client");
+                // 关闭连接
+                ret = false;
+                break;
+            case NO_OPERATION:
+                // 不进行任何操作
+                ret = true;
+                break;
+            default:
+                ret = false;
+                break;
+        }
 
         return ret;
     } catch(const std::exception& e){

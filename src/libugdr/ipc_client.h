@@ -8,7 +8,8 @@ namespace lib{
 
 class IpcClient {
 public:
-    static void sendReqAndHandleRsp(int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp, int* out_fd = nullptr);
+    static void sendReqAndHandleRsp(int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp);
+    static void sendReqAndHandleRspWithFds(int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp, std::vector<int>& fds);
 };
 
 }

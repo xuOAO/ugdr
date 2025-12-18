@@ -78,16 +78,16 @@ struct ibv_qp {
 };
 
 struct ugdr_qp_init_attr {
-    void* qp_context;
+    void* qp_context = nullptr;
     struct ugdr_cq* send_cq;
     struct ugdr_cq* recv_cq;
     struct {
         uint32_t max_send_wr;
         uint32_t max_recv_wr;
-        uint32_t max_sge; // 暂时保留 max_sge = 1
+        uint32_t max_sge = 1;
     } cap;
-    int qp_type; // 暂时保留 qp_type = rc
-    int sq_sig_all;
+    int qp_type = rc;
+    int sq_sig_all = 1;
 };
 
 struct ugdr_qp_attr {

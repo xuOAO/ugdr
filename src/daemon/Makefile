@@ -16,7 +16,7 @@ CUDA_LDFLAGS := -L$(CUDA_PATH)/lib64 -lcudart -lcuda
 # Recursively find sources in daemon directory
 DAEMON_CPP_SRCS := $(shell find . -name "*.cpp")
 DAEMON_CU_SRCS := $(shell find . -name "*.cu")
-COMMON_SRCS := $(wildcard ../common/*.cpp)
+COMMON_SRCS := $(shell find ../common -name "*.cpp")
 
 # Objects
 DAEMON_CPP_OBJS := $(patsubst ./%.cpp, $(OBJ_DIR)/daemon/%.o, $(DAEMON_CPP_SRCS))
