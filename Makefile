@@ -55,7 +55,7 @@ daemon: dirs
 	@echo "=== Building ugdr-daemon ==="
 	@$(MAKE) -C src/daemon
 
-tests: libugdr dirs
+tests: libugdr daemon dirs
 	@echo "=== Building tests ==="
 	@$(MAKE) -C tests
 

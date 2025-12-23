@@ -4,6 +4,7 @@
 *.so
 *.lo
 *.la
+*.log
 
 .vscode
 build/

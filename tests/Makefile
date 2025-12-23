@@ -1,10 +1,10 @@
 # Tests Makefile
 
 # Sources
-TEST_SRCS := $(wildcard *.cpp)
+TEST_SRCS := main.cpp connection_test.cpp ipc_test.cpp resource_management.cpp
 
-# Output Executables (one per cpp file)
-TEST_EXES := $(patsubst %.cpp, $(BIN_DIR)/tests/%, $(TEST_SRCS))
+# Output Executable
+TEST_EXE := $(BIN_DIR)/tests/run_tests
 
 # Objects
 TEST_OBJS := $(patsubst %.cpp, $(OBJ_DIR)/tests/%.o, $(TEST_SRCS))
@@ -13,19 +13,19 @@ TEST_OBJS := $(patsubst %.cpp, $(OBJ_DIR)/tests/%.o, $(TEST_SRCS))
 DEPS := $(TEST_OBJS:.o=.d)
 
 # Flags
-CXXFLAGS += $(INC_FLAGS)
+CXXFLAGS += $(INC_FLAGS) $(shell pkg-config --cflags gtest 2>/dev/null)
 # Link against libugdr.so
-LDFLAGS += -L$(BIN_DIR) -lugdr -Wl,-rpath=$(BIN_DIR)
+LDFLAGS += -L$(BIN_DIR) -lugdr -Wl,-rpath=$(BIN_DIR) $(shell pkg-config --libs gtest 2>/dev/null) -lgtest -lpthread
 
 .PHONY: all clean
 
-all: $(TEST_EXES)
+all: $(TEST_EXE)
 
 # Build each test executable
-$(BIN_DIR)/tests/%: $(OBJ_DIR)/tests/%.o
+$(TEST_EXE): $(TEST_OBJS)
 	@mkdir -p $(dir $@)
 	@echo "  LD      $@"
-	@$(CXX) -o $@ $< $(LDFLAGS)
+	@$(CXX) -o $@ $^ $(LDFLAGS)
 
 # Compile Test Sources
 $(OBJ_DIR)/tests/%.o: %.cpp
@@ -36,4 +36,4 @@ $(OBJ_DIR)/tests/%.o: %.cpp
 -include $(DEPS)
 
 clean:
-	rm -f $(TEST_EXES) $(TEST_OBJS) $(DEPS)
+	rm -f $(TEST_EXE) $(TEST_OBJS) $(DEPS)
