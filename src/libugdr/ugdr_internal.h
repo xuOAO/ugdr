@@ -21,6 +21,7 @@ struct ugdr_cq {
 
 struct ugdr_qp {
     ugdr::ipc::Socket* sock_ptr;
+    uint32_t pd_handle;
     uint32_t qp_handle;
     ugdr::ipc::Shmem rq;
     ugdr::ipc::Shmem sq;

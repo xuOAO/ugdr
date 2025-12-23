@@ -40,6 +40,10 @@ int ugdr_destroy_qp(struct ugdr_qp* qp);
 //experimental api
 int ugdr_experimental_write_cq(struct ugdr_cq* cq, int word);
 int ugdr_experimental_read_cq(struct ugdr_cq* cq);
+int ugdr_experimental_write_qp_sq(struct ugdr_qp* qp, int word);
+int ugdr_experimental_read_qp_sq(struct ugdr_qp* qp);
+int ugdr_experimental_write_qp_rq(struct ugdr_qp* qp, int word);
+int ugdr_experimental_read_qp_rq(struct ugdr_qp* qp);
 
 #ifdef __cplusplus
 }

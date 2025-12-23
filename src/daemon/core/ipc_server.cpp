@@ -261,10 +261,10 @@ int IpcServer::handleCreateQp(IpcServer* server, int client_fd, struct ipc::ugdr
     int ret = NO_OPERATION;
     ssize_t n = 0;
     uint32_t qp_handle = 0;
-    int rq_fd = -1;
-    int sq_fd = -1;
-    ipc::Shmem* rq_shm = nullptr;
-    ipc::Shmem* sq_shm = nullptr;
+    struct shmring_attr sq_attr;
+    struct shmring_attr rq_attr;
+    ipc::Shmem* send_cq = nullptr;
+    ipc::Shmem* recv_cq = nullptr;
     Ctx* ctx = nullptr;
     Pd* pd = nullptr;
 
@@ -277,20 +277,27 @@ int IpcServer::handleCreateQp(IpcServer* server, int client_fd, struct ipc::ugdr
     } else {
         pd = ctx->get_pd(req.create_qp_req.pd_handle);
         if (pd == nullptr) {
+            ipc::Shmem* recv_cq = nullptr;
             UGDR_LOG_INFO("[Server]: client %d create qp failed, no pd", client_fd);
             status = -1;
             ret = CLOSE_SOCK;
         } else {
-            // {qp_handle, rq_shm, sq_shm} = pd->create_qp(/* add arguments here */);
+            send_cq = ctx->get_cq(req.create_qp_req.qp_attr.send_cq_handle);
+            recv_cq = ctx->get_cq(req.create_qp_req.qp_attr.recv_cq_handle);
             struct qp_init_attr qp_init_attr = {
-                .send_cq_handle = req.create_qp_req.qp_attr.send_cq_handle,
-                .recv_cq_handle = req.create_qp_req.qp_attr.recv_cq_handle,
+                .send_cq = send_cq,
+                .recv_cq = recv_cq,
                 .max_send_wr = req.create_qp_req.qp_attr.cap.max_send_wr,
                 .max_recv_wr = req.create_qp_req.qp_attr.cap.max_recv_wr,
                 .qp_type = req.create_qp_req.qp_attr.qp_type,
                 .sq_sig_all = req.create_qp_req.qp_attr.sq_sig_all
             };
-            //qp_handle = pd->create_qp(qp_init_attr, &rq_fd, &sq_fd);
+            qp_handle = pd->create_qp(qp_init_attr, &sq_attr, &rq_attr);
+            if (rq_attr.fd < 0 || sq_attr.fd < 0) {
+                UGDR_LOG_INFO("[Server]: client %d create qp failed rq_fd = %d, sq_fd = %d", rq_attr.fd, sq_attr.fd);
+                status = -1;
+                ret = CLOSE_SOCK;
+            }
         }
     }
 
@@ -303,10 +310,24 @@ int IpcServer::handleCreateQp(IpcServer* server, int client_fd, struct ipc::ugdr
         },
         .create_qp_rsp = {
             .qp_handle = qp_handle,
+            .sq_size = sq_attr.ring_size,
+            .rq_size = rq_attr.ring_size,
         },
     };
+    strncpy(rsp.create_qp_rsp.sq_name, sq_attr.ring_name.c_str(), sizeof(rsp.create_qp_rsp.sq_name)-1);
+    strncpy(rsp.create_qp_rsp.rq_name, rq_attr.ring_name.c_str(), sizeof(rsp.create_qp_rsp.rq_name)-1);
 
     // 3.send response with fds
+    if (ret == NO_OPERATION) {
+        std::vector<int> fds = {rq_attr.fd, sq_attr.fd};
+        n = ipc::send_rsp_with_fds(client_fd, &rsp, sizeof(rsp), fds);
+        if (n < sizeof(rsp)) {
+            pd->destroy_qp(qp_handle);
+            throw std::runtime_error("Failed to send create_qp response with fds to client");
+        }
+    }
+
+    UGDR_LOG_INFO("[Server]: client %d create qp, status= %d, qp_handle= %u", client_fd, status, qp_handle);
 
     return ret;
 }
@@ -315,9 +336,37 @@ int IpcServer::handleDestroyQp(IpcServer* server, int client_fd, struct ipc::ugd
     int status = 0;
     int ret = NORMAL_SEND;
     Ctx* ctx = nullptr;
+    Pd* pd = nullptr;
 
     // 1.handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d destroy qp failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        pd = ctx->get_pd(req.destroy_qp_req.pd_handle);
+        if (pd == nullptr) {
+            UGDR_LOG_INFO("[Server]: client %d destroy qp failed, no pd", client_fd);
+            status = -1;
+            ret = CLOSE_SOCK;
+        } else {
+            if (pd->destroy_qp(req.destroy_qp_req.qp_handle) != 0) {
+                throw std::runtime_error("Failed to destroy qp");
+            }
+
+        }
+    }
     // 2.build response
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_DESTROY_QP,
+            .status = status,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d destroy qp, status= %d", client_fd, status);
 
     return ret;
 }
@@ -339,6 +388,8 @@ int IpcServer::handleExperimental(IpcServer* server, int client_fd, struct ipc::
     int ret = NORMAL_SEND;
     int data = 0;
     Ctx* ctx = nullptr;
+    Pd* pd = nullptr;
+    Qp* qp = nullptr;
     ipc::Shmem* shm = nullptr;
 
     // 1.handle
@@ -349,7 +400,21 @@ int IpcServer::handleExperimental(IpcServer* server, int client_fd, struct ipc::
         ret = CLOSE_SOCK;
     } else {
         // read data from Shmem
-        shm = ctx->get_cq_shmem(static_cast<uint32_t>(req.experimental_req.data));
+        switch (req.experimental_req.type) {
+        case 0:
+            shm = ctx->get_cq(static_cast<uint32_t>(req.experimental_req.cq.cq_handle));
+            break;
+        case 1:
+            pd = ctx->get_pd(req.experimental_req.qp.pd_handle);
+            qp = pd->get_qp(req.experimental_req.qp.qp_handle); 
+            shm = qp->get_sq();
+            break;
+        case 2:
+            pd = ctx->get_pd(req.experimental_req.qp.pd_handle);
+            qp = pd->get_qp(req.experimental_req.qp.qp_handle);
+            shm = qp->get_rq();
+            break;
+        }
         shm->read(&data, sizeof(data));
     }
 

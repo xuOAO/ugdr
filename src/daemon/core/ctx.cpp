@@ -63,7 +63,7 @@ int Ctx::destroy_cq(uint32_t cq_handle) {
     }
 }
 
-ipc::Shmem* Ctx::get_cq_shmem(uint32_t cq_handle) {
+ipc::Shmem* Ctx::get_cq(uint32_t cq_handle) {
     auto it = cq_map_.find(cq_handle);
     if (it != cq_map_.end()) {
         return it->second.get();

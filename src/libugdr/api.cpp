@@ -226,7 +226,7 @@ struct ugdr_qp* ugdr_create_qp(struct ugdr_pd* pd, struct ugdr_qp_init_attr* ini
         // TODO: 考虑重构初始化，当前可读性太差
         ugdr::ipc::Shmem rq = ugdr::ipc::Shmem(std::string(rsp.create_qp_rsp.rq_name), rsp.create_qp_rsp.rq_size, shm_fd[0]);
         ugdr::ipc::Shmem sq = ugdr::ipc::Shmem(std::string(rsp.create_qp_rsp.sq_name), rsp.create_qp_rsp.sq_size, shm_fd[1]);
-        struct ugdr_qp* qp = new struct ugdr_qp({pd->sock_ptr, rsp.create_qp_rsp.qp_handle, std::move(rq), std::move(sq), init_attr->qp_context, init_attr->cap.max_sge, init_attr->qp_type, init_attr->sq_sig_all});
+        struct ugdr_qp* qp = new struct ugdr_qp({pd->sock_ptr, pd->pd_handle, rsp.create_qp_rsp.qp_handle, std::move(rq), std::move(sq), init_attr->qp_context, init_attr->cap.max_sge, init_attr->qp_type, init_attr->sq_sig_all});
 
         return qp;
     } catch(const std::exception& e){
@@ -247,12 +247,10 @@ int ugdr_destroy_qp(struct ugdr_qp* qp){
                 .cmd = ugdr::ipc::Cmd::UGDR_CMD_DESTROY_QP,
                 .status = 0,
             },
-            .destroy_rsrc_req = {
-                .handle = {
-                    .qp_handle = qp->qp_handle,
-                }
+            .destroy_qp_req = {
+                .pd_handle = qp->pd_handle,
+                .qp_handle = qp->qp_handle,
             }
-
         };
         // 2. send req and handle rsp
         ugdr::lib::IpcClient::sendReqAndHandleRsp(qp->sock_ptr->get_fd(), req, rsp);
@@ -290,12 +288,99 @@ int ugdr_experimental_read_cq(struct ugdr_cq* cq){
                 .status = 0,
             },
             .experimental_req = {
-                .data = static_cast<int>(cq->cq_handle),
+                .type = 0,
+                .cq = {
+                    .cq_handle = cq->cq_handle,
+                }
             },
         };
 
         // 2. send req and handle rsp
         ugdr::lib::IpcClient::sendReqAndHandleRsp(cq->sock_ptr->get_fd(), req, rsp);
+
+        // 3. return result
+        return rsp.experimental_rsp.data;
+    } catch(const std::exception& e){
+        UGDR_LOG_ERROR("[Client]: Failed to read cq: %s", e.what());
+        return -1;
+    }
+}
+
+int ugdr_experimental_write_qp_sq(struct ugdr_qp* qp, int word){
+    if (qp == nullptr) return -1;
+    try {
+        qp->sq.write(&word, sizeof(word));
+        return 0;
+    } catch(const std::exception& e){
+        UGDR_LOG_ERROR("[Client]: Failed to write cq: %s", e.what());
+        return -1;
+    }
+}
+
+int ugdr_experimental_write_qp_rq(struct ugdr_qp* qp, int word){
+    if (qp == nullptr) return -1;
+    try {
+        qp->rq.write(&word, sizeof(word));
+        return 0;
+    } catch(const std::exception& e){
+        UGDR_LOG_ERROR("[Client]: Failed to write cq: %s", e.what());
+        return -1;
+    }
+}
+
+int ugdr_experimental_read_qp_sq(struct ugdr_qp* qp){
+    if (qp == nullptr) return -1;
+    try {
+        // 1. build request
+        struct ugdr::ipc::ugdr_response rsp;
+        struct ugdr::ipc::ugdr_request req = {
+            .header = {
+                .magic = ugdr::ipc::UGDR_PROTO_MAGIC,
+                .cmd = ugdr::ipc::Cmd::UGDR_CMD_EXPERIMENTAL,
+                .status = 0,
+            },
+            .experimental_req = {
+                .type = 1,
+                .qp = {
+                    .pd_handle = qp->pd_handle,
+                    .qp_handle = qp->qp_handle,
+                }
+            },
+        };
+
+        // 2. send req and handle rsp
+        ugdr::lib::IpcClient::sendReqAndHandleRsp(qp->sock_ptr->get_fd(), req, rsp);
+
+        // 3. return result
+        return rsp.experimental_rsp.data;
+    } catch(const std::exception& e){
+        UGDR_LOG_ERROR("[Client]: Failed to read cq: %s", e.what());
+        return -1;
+    }
+}
+
+int ugdr_experimental_read_qp_rq(struct ugdr_qp* qp){
+    if (qp == nullptr) return -1;
+    try {
+        // 1. build request
+        struct ugdr::ipc::ugdr_response rsp;
+        struct ugdr::ipc::ugdr_request req = {
+            .header = {
+                .magic = ugdr::ipc::UGDR_PROTO_MAGIC,
+                .cmd = ugdr::ipc::Cmd::UGDR_CMD_EXPERIMENTAL,
+                .status = 0,
+            },
+            .experimental_req = {
+                .type = 2,
+                .qp = {
+                    .pd_handle = qp->pd_handle,
+                    .qp_handle = qp->qp_handle,
+                }
+            },
+        };
+
+        // 2. send req and handle rsp
+        ugdr::lib::IpcClient::sendReqAndHandleRsp(qp->sock_ptr->get_fd(), req, rsp);
 
         // 3. return result
         return rsp.experimental_rsp.data;

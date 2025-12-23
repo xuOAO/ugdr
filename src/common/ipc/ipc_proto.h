@@ -87,10 +87,18 @@ struct ugdr_create_qp_req {
 //TODO：应该返回很多qp属性
 struct ugdr_create_qp_rsp {
     uint32_t qp_handle;
-    char rq_name[common::UGDR_MAX_SHRING_NAME_LEN];
     char sq_name[common::UGDR_MAX_SHRING_NAME_LEN];
-    size_t rq_size;
+    char rq_name[common::UGDR_MAX_SHRING_NAME_LEN];
     size_t sq_size;
+    size_t rq_size;
+};
+
+struct ugdr_destroy_qp_req {
+    uint32_t pd_handle;
+    uint32_t qp_handle;
+};
+
+struct ugdr_destroy_qp_rsp {
 };
 
 struct ugdr_modify_qp_req {
@@ -122,6 +130,7 @@ struct ugdr_reg_mr_rsp {
     uint32_t rkey;
 };
 
+//TODO: 后续拆散，目前destroy_qp已经拆离
 struct ugdr_destroy_rsrc_req {
     union {
         uint32_t pd_handle;
@@ -136,7 +145,16 @@ struct ugdr_destroy_rsrc_rsp {
 
 struct ugdr_experimental_req {
     // experimental fields
-    int data;
+    int type; // 0 = cq, 1 = qp_rq, 2 = qp_sq
+    union{
+        struct {
+            uint32_t cq_handle;
+        } cq;
+        struct {
+            uint32_t pd_handle;
+            uint32_t qp_handle;
+        } qp;
+    };
 };
 
 struct ugdr_experimental_rsp {
@@ -158,7 +176,9 @@ struct ugdr_request {
         struct ugdr_create_cq_req create_cq_req;
         struct ugdr_create_qp_req create_qp_req;
         struct ugdr_modify_qp_req modify_qp_req;
+        //TODO: 拆分
         struct ugdr_destroy_rsrc_req destroy_rsrc_req;
+        struct ugdr_destroy_qp_req destroy_qp_req;
         // experimental cmds
         struct ugdr_experimental_req experimental_req;
     };
@@ -172,7 +192,9 @@ struct ugdr_response {
         struct ugdr_create_cq_rsp create_cq_rsp;
         struct ugdr_create_qp_rsp create_qp_rsp;
         struct ugdr_modify_qp_rsp modify_qp_rsp;
+        //TODO: 拆分
         struct ugdr_destroy_rsrc_rsp destroy_rsrc_rsp;
+        struct ugdr_destroy_qp_rsp destroy_qp_rsp;
         // experimental cmds
         struct ugdr_experimental_rsp experimental_rsp;
     };
