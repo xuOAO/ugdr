@@ -60,15 +60,18 @@ void IpcServer::handle_new_connect() {
 int IpcServer::handleOpenDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     int status = 0;
     int ret = NORMAL_SEND;
+    Eth* eth;
     Ctx* ctx;
 
     // 1.handle
-    ctx = server->manager_->get_ctx(std::string(req.open_dev_req.dev_name));
-    if (ctx == nullptr){
+    eth = server->manager_->get_eth(std::string(req.open_dev_req.dev_name));
+    // ctx = server->manager_->get_ctx(std::string(req.open_dev_req.dev_name));
+    if (eth == nullptr){
         UGDR_LOG_INFO("[Server]: client %d open device failed, unknown device name: %s", client_fd, req.open_dev_req.dev_name);
         status = -1;
         ret = CLOSE_SOCK;
     } else{
+        ctx = eth->alloc_ctx(client_fd);
         server->client_ctx_map_[client_fd] = ctx;
     }
 
@@ -90,6 +93,25 @@ int IpcServer::handleOpenDevice(IpcServer* server, int client_fd, struct ipc::ug
 int IpcServer::handleCloseDevice(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     int status = 0;
     int ret = CLOSE_SOCK; // 默认返回false，断开连接
+    Eth* eth;
+    Ctx* ctx;
+
+    //1. handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d close device failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        eth = ctx->get_eth();
+        int tmp = eth->dealloc_ctx(client_fd);
+        UGDR_LOG_INFO("dealloc_ctx ret= %d", tmp);
+        if (tmp != 0) {
+            UGDR_LOG_INFO("[Server]: client %d close device failed", client_fd);
+            status = -1;
+            ret = CLOSE_SOCK;
+        }
+    }
 
     // 直接返回false，断开连接
     rsp = ipc::ugdr_response{

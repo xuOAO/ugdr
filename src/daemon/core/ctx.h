@@ -11,13 +11,16 @@
 namespace ugdr{
 namespace core{
 
+class Eth;
+
 class Ctx {
 public:
-    Ctx(const EthConfig& config);
+    Ctx(Eth* eth, const std::string& ctx_name);
     ~Ctx();
 
-    // basic info
-    std::string get_eth_name() const { return eth_name_; }
+    //reverse link
+    Eth* get_eth() const { return eth_; }
+
     // pd
     uint32_t alloc_pd();
     int dealloc_pd(uint32_t pd_handle);
@@ -29,12 +32,11 @@ public:
     //TODO: Shmem未来需要替换成 ShmRing类
 
 private:
-    std::string eth_name_;
+    Eth* eth_;
+    std::string ctx_name_;
 
-    //TODO: 极其重要！！ 这里似乎有问题，目前close device只是释放socket，但是没有关闭相关的PD，如果没有显示调用dealloc_pd的情况，
-    //那么pd以及起所包含的资源将不会释放，会造成严重的内存泄漏。
     std::unordered_map<uint32_t, std::unique_ptr<Pd>> pd_map_; // key: pd_handle, value: Pd pointer
-    //TODO: Shmem未来需要替换成 ShmRing类
+
     std::unordered_map<uint32_t, std::unique_ptr<ipc::Shmem>> cq_map_; // key: cq_handle, value: shmring
 };
 

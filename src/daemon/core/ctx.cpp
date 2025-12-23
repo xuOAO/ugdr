@@ -4,7 +4,7 @@
 namespace ugdr{
 namespace core{
 
-Ctx::Ctx(const EthConfig& eth_config) : eth_name_{eth_config.eth_name} {}
+Ctx::Ctx(Eth* eth, const std::string& ctx_name) : eth_(eth), ctx_name_(ctx_name) {}
 
 Ctx::~Ctx() = default;
 
@@ -46,7 +46,7 @@ uint32_t Ctx::create_cq(uint32_t cqe, struct shmring_attr* shmring_attr) {
     // 3. create shmring and get fd
     //TODO: 未来需要替换成 ShmRing 类
     //TODO: cq name 需要更规范一些
-    cq_map_[cq_handle] = std::make_unique<ipc::Shmem>(eth_name_ + "_cq_" + std::to_string(cq_handle), size);
+    cq_map_[cq_handle] = std::make_unique<ipc::Shmem>(ctx_name_ + "_cq_" + std::to_string(cq_handle), size);
     shmring_attr->ring_name = cq_map_[cq_handle]->get_name();
     shmring_attr->ring_size = cq_map_[cq_handle]->get_size();
     shmring_attr->fd = cq_map_[cq_handle]->get_fd();

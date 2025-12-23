@@ -17,7 +17,7 @@
 class DaemonTest : public ::testing::Test {
 protected:
     pid_t daemon_pid = -1;
-    const char* log_file_path = "/home/wx/.gemini/tmp/d040cf6bb893d8f157810d35dc6d2a60b50fe279897661bfa7e8317f093ca411/daemon.log";
+    const char* log_file_path = "./daemon.log";
 
     void SetUp() override {
         // Clean up log from previous run
