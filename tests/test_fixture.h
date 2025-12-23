@@ -18,34 +18,41 @@ class DaemonTest : public ::testing::Test {
 protected:
     pid_t daemon_pid = -1;
     const char* log_file_path = "./daemon.log";
+    bool manage_daemon = true;
 
     void SetUp() override {
-        // Clean up log from previous run
-        std::remove(log_file_path);
-
-        daemon_pid = fork();
-        if (daemon_pid == 0) {
-            // Child process: redirect stdout/stderr and then exec
-            int log_fd = open(log_file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (log_fd == -1) {
-                perror("open log file");
-                exit(EXIT_FAILURE);
-            }
-            dup2(log_fd, STDOUT_FILENO);
-            dup2(log_fd, STDERR_FILENO);
-            close(log_fd);
-
-            const char* path = "./build/bin/ugdr-daemon";
-            char* const argv[] = { (char*)path, NULL };
-            execv(path, argv);
-            // execv only returns on error
-            perror("execv");
-            exit(EXIT_FAILURE);
-        } else if (daemon_pid < 0) {
-            // Fork failed
-            FAIL() << "Failed to fork daemon process";
+        if (std::getenv("UGDR_TEST_NO_DAEMON")) {
+            manage_daemon = false;
         }
-        // Parent process
+
+        if (manage_daemon) {
+            // Clean up log from previous run
+            std::remove(log_file_path);
+
+            daemon_pid = fork();
+            if (daemon_pid == 0) {
+                // Child process: redirect stdout/stderr and then exec
+                int log_fd = open(log_file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (log_fd == -1) {
+                    perror("open log file");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(log_fd, STDOUT_FILENO);
+                dup2(log_fd, STDERR_FILENO);
+                close(log_fd);
+
+                const char* path = "./build/bin/ugdr-daemon";
+                char* const argv[] = { (char*)path, NULL };
+                execv(path, argv);
+                // execv only returns on error
+                perror("execv");
+                exit(EXIT_FAILURE);
+            } else if (daemon_pid < 0) {
+                // Fork failed
+                FAIL() << "Failed to fork daemon process";
+            }
+        }
+        // Parent process or manual daemon mode
         wait_for_daemon_ready();
     }
 
@@ -67,12 +74,14 @@ protected:
         }
 
         // If we get here, it's a timeout.
-        TearDown(); // Clean up the zombie process
+        if (manage_daemon) {
+            TearDown(); // Clean up the zombie process
+        }
         FAIL() << "Daemon failed to start and signal readiness within " << timeout_sec << " seconds.";
     }
 
     void TearDown() override {
-        if (daemon_pid <= 0) {
+        if (!manage_daemon || daemon_pid <= 0) {
             return;
         }
 
