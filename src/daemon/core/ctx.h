@@ -5,7 +5,7 @@
 #include <memory>
 #include "../utils/config.h"
 #include "pd.h"
-#include "../../common/ipc/shm_ring.h"
+#include "../../common/ipc/shm.h"
 #include "daemon_types.h"
 
 namespace ugdr{

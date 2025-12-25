@@ -56,12 +56,5 @@ private:
     void* addr_ = nullptr;
 };
 
-class Shring : public Shmem {
-public:
-    Shring(std::string name, size_t size) : Shmem(name, size) {}
-    virtual ~Shring() = default;
-private:
-};
-
 } // namespace ipc
 } // namespace ugdr

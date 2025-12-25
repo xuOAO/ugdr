@@ -1,7 +1,7 @@
 #include <string>
 #include <sys/mman.h>
 #include <unistd.h>
-#include "shm_ring.h"
+#include "shm.h"
 
 
 namespace ugdr{

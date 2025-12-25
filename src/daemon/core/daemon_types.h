@@ -2,7 +2,7 @@
 
 #include <string>
 #include <cstdint>
-#include "../../common/ipc/shm_ring.h"
+#include "../../common/ipc/shm.h"
 
 namespace ugdr{
 namespace core{

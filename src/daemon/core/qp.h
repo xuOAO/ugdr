@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
-#include "../../common/ipc/shm_ring.h"
+#include "../../common/ipc/shm.h"
 #include "daemon_types.h"
 
 namespace ugdr{

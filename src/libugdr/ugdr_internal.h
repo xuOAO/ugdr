@@ -1,6 +1,6 @@
 #pragma once
 #include "../common/ipc/socket_utils.h"
-#include "../common/ipc/shm_ring.h"
+#include "../common/ipc/shm.h"
 #include "../common/ugdr_types.h"
 
 struct ugdr_context {
