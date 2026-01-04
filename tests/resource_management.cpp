@@ -57,3 +57,25 @@ TEST_F(DaemonTest, Resource_QP_CreateDestroy) {
     ASSERT_EQ(ugdr_dealloc_pd(ctx, pd), 0);
     ugdr_close_device(ctx);
 }
+
+// Test MR registration and deregistration
+TEST_F(DaemonTest, Resource_MR_RegDereg) {
+    struct ugdr_context* ctx = ugdr_open_device("eth0");
+    ASSERT_NE(ctx, nullptr);
+
+    struct ugdr_pd* pd = ugdr_alloc_pd(ctx);
+    ASSERT_NE(pd, nullptr);
+
+    size_t length = 1024;
+    void* addr = malloc(length);
+    ASSERT_NE(addr, nullptr);
+
+    struct ugdr_mr* mr = ugdr_reg_mr(pd, addr, length, UGDR_ACCESS_LOCAL_WRITE);
+    ASSERT_NE(mr, nullptr);
+
+    ASSERT_EQ(ugdr_dereg_mr(mr), 0);
+    
+    free(addr);
+    ASSERT_EQ(ugdr_dealloc_pd(ctx, pd), 0);
+    ugdr_close_device(ctx);
+}

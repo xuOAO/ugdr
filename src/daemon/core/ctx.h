@@ -6,6 +6,8 @@
 #include "../utils/config.h"
 #include "pd.h"
 #include "../../common/ipc/shm.h"
+#include "../../common/ipc/spsc_shmring.h"
+#include "../../common/ugdr_types.h"
 #include "daemon_types.h"
 
 namespace ugdr{
@@ -28,8 +30,7 @@ public:
     // cq
     uint32_t create_cq(uint32_t cqe, struct shmring_attr* shring_attr);
     int destroy_cq(uint32_t cq_handle);
-    ipc::Shmem* get_cq(uint32_t cq_handle);
-    //TODO: Shmem未来需要替换成 ShmRing类
+    ipc::SpscShmRing<common::Cqe>* get_cq(uint32_t cq_handle);
 
 private:
     Eth* eth_;
@@ -37,7 +38,7 @@ private:
 
     std::unordered_map<uint32_t, std::unique_ptr<Pd>> pd_map_; // key: pd_handle, value: Pd pointer
 
-    std::unordered_map<uint32_t, std::unique_ptr<ipc::Shmem>> cq_map_; // key: cq_handle, value: shmring
+    std::unordered_map<uint32_t, std::unique_ptr<ipc::SpscShmRing<common::Cqe>>> cq_map_; // key: cq_handle, value: shmring
 };
 
 }

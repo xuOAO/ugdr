@@ -6,10 +6,11 @@
 namespace ugdr{
 
 namespace core{
-class Ctx;
 }
 
 namespace ipc{
+
+constexpr size_t CACHELINE_SIZE = 64;
 
 class Shmem {
 public:
@@ -17,7 +18,7 @@ public:
     Shmem(std::string name, size_t size);
     // for client receive mem_fd
     Shmem(std::string name, size_t size, int fd);
-    virtual ~Shmem() = default;
+    virtual ~Shmem();
     Shmem(const Shmem&) = delete;
     Shmem& operator=(const Shmem&) = delete;
     Shmem(Shmem&& other) noexcept;
@@ -42,6 +43,8 @@ public:
         ::memcpy(data, addr_, size);
     }
 protected:
+    void* addr_ = nullptr;
+
     inline void throw_error(const std::string& msg){
         throw std::runtime_error("Shmem error: " + msg);
     }
@@ -53,7 +56,6 @@ private:
     std::string name_;
     int fd_ = -1;
     size_t size_ = 0;
-    void* addr_ = nullptr;
 };
 
 } // namespace ipc

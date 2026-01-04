@@ -20,8 +20,8 @@ NVCC := nvcc
 # Given requirements, libugdr needs -fPIC. Common objects linked to libugdr also need -fPIC.
 # Common objects linked to daemon (executable) don't strictly need it but it allows sharing objects if we want to be fancy.
 # To avoid recompiling common objects twice (once for lib, once for daemon), we can compile them with -fPIC always.
-CXXFLAGS := -std=c++17 -Wall -Wextra
-NVCCFLAGS := -std=c++17 -ccbin $(CXX)
+CXXFLAGS := -std=c++20 -Wall -Wextra
+NVCCFLAGS := -std=c++20 -ccbin $(CXX)
 
 # Include Paths
 INC_FLAGS := -I$(PROJECT_ROOT)/include -I$(PROJECT_ROOT)/src

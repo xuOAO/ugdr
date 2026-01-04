@@ -3,7 +3,7 @@
 namespace ugdr{
 namespace core{
 
-Eth::Eth(const EthConfig& eth_config) : eth_name_{eth_config.eth_name} {}
+Eth::Eth(const EthConfig& eth_config) : eth_name_{eth_config.eth_name}, mr_map_(std::make_unique<MrMap>()) {}
 
 Eth::~Eth() = default;
 

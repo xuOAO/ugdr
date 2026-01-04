@@ -71,6 +71,10 @@ Shmem::Shmem(std::string name, size_t size, int fd) : name_(name), fd_(fd) {
     map_memory();
 }
 
+Shmem::~Shmem() {
+    cleanup();
+}
+
 Shmem::Shmem(Shmem&& other) noexcept {
     move_from(std::move(other));
 }

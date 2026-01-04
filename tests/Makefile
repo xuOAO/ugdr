@@ -1,7 +1,7 @@
 # Tests Makefile
 
 # Sources
-TEST_SRCS := main.cpp connection_test.cpp ipc_test.cpp resource_management.cpp
+TEST_SRCS := main.cpp connection_test.cpp resource_management.cpp loopback_perf_test.cpp
 
 # Output Executable
 TEST_EXE := $(BIN_DIR)/tests/run_tests

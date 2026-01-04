@@ -3,6 +3,8 @@
 #include <string>
 #include <cstdint>
 #include "../../common/ipc/shm.h"
+#include "../../common/ipc/spsc_shmring.h"
+#include "../../common/ugdr_types.h"
 
 namespace ugdr{
 namespace core{
@@ -14,8 +16,8 @@ struct shmring_attr {
 };
 
 struct qp_init_attr {
-    ipc::Shmem* send_cq;
-    ipc::Shmem* recv_cq;
+    ipc::SpscShmRing<common::Cqe>* send_cq;
+    ipc::SpscShmRing<common::Cqe>* recv_cq;
 
     uint32_t max_send_wr;
     uint32_t max_recv_wr;

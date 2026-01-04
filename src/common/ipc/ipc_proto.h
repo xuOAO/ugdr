@@ -1,5 +1,4 @@
 #pragma once
-#include <bits/stdint-uintn.h>
 #include <cstdint>
 #include <cstddef>
 #include "../ugdr_types.h"
@@ -123,11 +122,15 @@ struct ugdr_reg_mr_req {
 };
 
 struct ugdr_reg_mr_rsp {
-    union{
-        uint32_t mr_handle;
-        uint32_t lkey;
-    };
-    uint32_t rkey;
+    uint32_t lkey;
+};
+
+struct ugdr_dereg_mr_req {
+    uint32_t pd_handle;
+    uint32_t lkey;
+};
+
+struct ugdr_dereg_mr_rsp {
 };
 
 //TODO: 后续拆散，目前destroy_qp已经拆离
@@ -136,7 +139,6 @@ struct ugdr_destroy_rsrc_req {
         uint32_t pd_handle;
         uint32_t cq_handle;
         uint32_t qp_handle;
-        uint32_t mr_handle;
     } handle;
 };
 
@@ -176,6 +178,8 @@ struct ugdr_request {
         struct ugdr_create_cq_req create_cq_req;
         struct ugdr_create_qp_req create_qp_req;
         struct ugdr_modify_qp_req modify_qp_req;
+        struct ugdr_reg_mr_req reg_mr_req;
+        struct ugdr_dereg_mr_req dereg_mr_req;
         //TODO: 拆分
         struct ugdr_destroy_rsrc_req destroy_rsrc_req;
         struct ugdr_destroy_qp_req destroy_qp_req;
@@ -192,6 +196,8 @@ struct ugdr_response {
         struct ugdr_create_cq_rsp create_cq_rsp;
         struct ugdr_create_qp_rsp create_qp_rsp;
         struct ugdr_modify_qp_rsp modify_qp_rsp;
+        struct ugdr_reg_mr_rsp reg_mr_rsp;
+        struct ugdr_dereg_mr_rsp dereg_mr_rsp;
         //TODO: 拆分
         struct ugdr_destroy_rsrc_rsp destroy_rsrc_rsp;
         struct ugdr_destroy_qp_rsp destroy_qp_rsp;

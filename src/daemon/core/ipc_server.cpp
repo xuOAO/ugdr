@@ -285,8 +285,8 @@ int IpcServer::handleCreateQp(IpcServer* server, int client_fd, struct ipc::ugdr
     uint32_t qp_handle = 0;
     struct shmring_attr sq_attr;
     struct shmring_attr rq_attr;
-    ipc::Shmem* send_cq = nullptr;
-    ipc::Shmem* recv_cq = nullptr;
+    ipc::SpscShmRing<common::Cqe>* send_cq = nullptr;
+    ipc::SpscShmRing<common::Cqe>* recv_cq = nullptr;
     Ctx* ctx = nullptr;
     Pd* pd = nullptr;
 
@@ -393,6 +393,89 @@ int IpcServer::handleDestroyQp(IpcServer* server, int client_fd, struct ipc::ugd
     return ret;
 }
 
+int IpcServer::handleRegMr(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    int ret = NORMAL_SEND;
+    uint32_t lkey = 0;
+    
+    Ctx* ctx = nullptr;
+    Pd* pd = nullptr;
+
+    // 1.handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d reg mr failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        pd = ctx->get_pd(req.reg_mr_req.pd_handle);
+        if (pd == nullptr) {
+            UGDR_LOG_INFO("[Server]: client %d reg mr failed, no pd", client_fd);
+            status = -1;
+            ret = CLOSE_SOCK;
+        } else {
+            lkey = pd->create_mr((void*)req.reg_mr_req.addr, req.reg_mr_req.length, req.reg_mr_req.access);
+        }
+    }
+
+    // 2.build response
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_REG_MR,
+            .status = status,
+        },
+        .reg_mr_rsp = {
+            .lkey = lkey,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d reg mr, status= %d, lkey= %u", client_fd, status, lkey);
+    return ret;
+}
+
+int IpcServer::handleDeregMr(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
+    int status = 0;
+    int ret = NORMAL_SEND;
+    
+    Ctx* ctx = nullptr;
+    Pd* pd = nullptr;
+
+    // 1.handle
+    ctx = server->get_ctx(client_fd);
+    if (ctx == nullptr) {
+        UGDR_LOG_INFO("[Server]: client %d dereg mr failed, no context", client_fd);
+        status = -1;
+        ret = CLOSE_SOCK;
+    } else {
+        pd = ctx->get_pd(req.dereg_mr_req.pd_handle);
+        if (pd == nullptr) {
+            UGDR_LOG_INFO("[Server]: client %d dereg mr failed, no pd", client_fd);
+            status = -1;
+            ret = CLOSE_SOCK;
+        } else {
+            if (pd->destroy_mr(req.dereg_mr_req.lkey) != 0) {
+                UGDR_LOG_INFO("[Server]: client %d dereg mr failed, invalid lkey", client_fd);
+                status = -1;
+                ret = CLOSE_SOCK;
+            }
+        }
+    }
+
+    // 2.build response
+    rsp = ipc::ugdr_response{
+        .header = {
+            .magic = ipc::UGDR_PROTO_MAGIC,
+            .cmd = ipc::Cmd::UGDR_CMD_DEREG_MR,
+            .status = status,
+        },
+    };
+
+    UGDR_LOG_INFO("[Server]: client %d dereg mr, status= %d", client_fd, status);
+
+    return ret;
+}
+
 int IpcServer::handleUnknownCmd(IpcServer* server, int client_fd, struct ipc::ugdr_request& req, struct ipc::ugdr_response& rsp){
     UGDR_LOG_INFO("[Server]: Unknown cmd: %d", static_cast<uint32_t>(req.header.cmd));
     rsp = ipc::ugdr_response{
@@ -466,6 +549,8 @@ IpcServer::CmdHandler IpcServer::cmdToHandler(ipc::Cmd cmd) {
         case ipc::Cmd::UGDR_CMD_DESTROY_CQ: return handleDestroyCq;
         case ipc::Cmd::UGDR_CMD_CREATE_QP: return handleCreateQp;
         case ipc::Cmd::UGDR_CMD_DESTROY_QP: return handleDestroyQp;
+        case ipc::Cmd::UGDR_CMD_REG_MR: return handleRegMr;
+        case ipc::Cmd::UGDR_CMD_DEREG_MR: return handleDeregMr;
         //experimental cmds
         case ipc::Cmd::UGDR_CMD_EXPERIMENTAL: return handleExperimental;
         default: return handleUnknownCmd;

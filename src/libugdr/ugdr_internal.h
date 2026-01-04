@@ -1,6 +1,7 @@
 #pragma once
 #include "../common/ipc/socket_utils.h"
 #include "../common/ipc/shm.h"
+#include "../common/ipc/spsc_shmring.h"
 #include "../common/ugdr_types.h"
 
 struct ugdr_context {
@@ -15,7 +16,7 @@ struct ugdr_pd {
 
 struct ugdr_cq {
     ugdr::ipc::Socket* sock_ptr;
-    ugdr::ipc::Shmem shmem;
+    ugdr::ipc::SpscShmRing<ugdr::common::Cqe> shring;
     uint32_t cq_handle;
 };
 
@@ -23,11 +24,12 @@ struct ugdr_qp {
     ugdr::ipc::Socket* sock_ptr;
     uint32_t pd_handle;
     uint32_t qp_handle;
-    ugdr::ipc::Shmem rq;
-    ugdr::ipc::Shmem sq;
+    ugdr::ipc::SpscShmRing<ugdr::common::Wqe> rq;
+    ugdr::ipc::SpscShmRing<ugdr::common::Wqe> sq;
     // TODO: 后续补充以下四个的功能
     void* qp_context;
     uint32_t max_sge;
     int qp_type;
     int sq_sig_all;
 };
+

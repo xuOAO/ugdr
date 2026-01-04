@@ -31,7 +31,7 @@ CXXFLAGS += $(INC_FLAGS) $(DPDK_CFLAGS)
 NVCCFLAGS += $(INC_FLAGS)
 
 # Linker Flags
-LDFLAGS += $(DPDK_LDFLAGS) $(CUDA_LDFLAGS)
+LDFLAGS += $(DPDK_LDFLAGS) $(CUDA_LDFLAGS) -lpthread
 
 # Dependencies
 DEPS := $(OBJS:.o=.d)
