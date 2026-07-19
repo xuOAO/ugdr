@@ -1,0 +1,4 @@
+interface:
+  display_name: "UGDR 功能文档填充"
+  short_description: "按固定模板创建、续写、审查并填写 UGDR 功能文档草稿"
+  default_prompt: "Use $ugdr-fill-feature-doc to create or update a UGDR feature document from a version feature item."

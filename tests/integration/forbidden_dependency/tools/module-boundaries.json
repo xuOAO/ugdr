@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "required_paths": [
+    "CMakeLists.txt",
+    "src/api.cpp",
+    "src/worker.cpp",
+    "tools/module-boundaries.json",
+    "docs/architecture/repository-skeleton.md"
+  ],
+  "repository_areas": [
+    {
+      "path": "src",
+      "responsibility": "Forbidden-edge fixture sources"
+    },
+    {
+      "path": "tools",
+      "responsibility": "Forbidden-edge fixture policy"
+    },
+    {
+      "path": "docs/architecture",
+      "responsibility": "Forbidden-edge fixture skeleton"
+    }
+  ],
+  "production_targets": [
+    "ugdr_api",
+    "ugdr_worker"
+  ],
+  "allowed_edges": [],
+  "target_metadata": {
+    "ugdr_api": {
+      "path": "src/api.cpp",
+      "responsibility": "Forbidden-edge fixture API"
+    },
+    "ugdr_worker": {
+      "path": "src/worker.cpp",
+      "responsibility": "Forbidden-edge fixture worker"
+    }
+  },
+  "skeleton_document": {
+    "path": "docs/architecture/repository-skeleton.md",
+    "begin_marker": "<!-- BEGIN GENERATED: module-boundaries -->",
+    "end_marker": "<!-- END GENERATED: module-boundaries -->"
+  }
+}

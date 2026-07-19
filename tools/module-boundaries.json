@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "required_paths": [
+    "CMakeLists.txt",
+    "include/ugdr",
+    "src/api",
+    "src/control",
+    "src/worker",
+    "src/gpu",
+    "apps/client",
+    "apps/daemon",
+    "tests/unit",
+    "tests/integration",
+    "tests/smoke",
+    "tools/module-boundaries.json",
+    "tools/check_module_boundaries.py",
+    "docs/architecture/repository-skeleton.md"
+  ],
+  "repository_areas": [
+    {
+      "path": "include/ugdr",
+      "responsibility": "对外公共声明"
+    },
+    {
+      "path": "src",
+      "responsibility": "生产库实现，按模块目录隔离"
+    },
+    {
+      "path": "apps",
+      "responsibility": "可执行程序入口与组合根"
+    },
+    {
+      "path": "tests/unit",
+      "responsibility": "模块级单元测试"
+    },
+    {
+      "path": "tests/integration",
+      "responsibility": "跨模块与边界集成测试"
+    },
+    {
+      "path": "tests/smoke",
+      "responsibility": "仓库主路径最小运行检查"
+    },
+    {
+      "path": "tools",
+      "responsibility": "机器可执行的仓库规则与检查器"
+    },
+    {
+      "path": "docs/architecture",
+      "responsibility": "稳定架构与仓库边界说明"
+    }
+  ],
+  "production_targets": [
+    "ugdr_api",
+    "ugdr_control",
+    "ugdr_worker",
+    "ugdr_gpu",
+    "ugdr_client",
+    "ugdr_daemon"
+  ],
+  "allowed_edges": [
+    {
+      "from": "ugdr_client",
+      "to": "ugdr_api"
+    },
+    {
+      "from": "ugdr_worker",
+      "to": "ugdr_control"
+    },
+    {
+      "from": "ugdr_daemon",
+      "to": "ugdr_control"
+    },
+    {
+      "from": "ugdr_daemon",
+      "to": "ugdr_worker"
+    },
+    {
+      "from": "ugdr_daemon",
+      "to": "ugdr_gpu"
+    }
+  ],
+  "target_metadata": {
+    "ugdr_api": {
+      "path": "src/api",
+      "responsibility": "Client 可见 API 门面占位"
+    },
+    "ugdr_control": {
+      "path": "src/control",
+      "responsibility": "控制面元数据与资源管理占位"
+    },
+    "ugdr_worker": {
+      "path": "src/worker",
+      "responsibility": "数据面 Worker 占位"
+    },
+    "ugdr_gpu": {
+      "path": "src/gpu",
+      "responsibility": "CUDA 执行模块占位"
+    },
+    "ugdr_client": {
+      "path": "apps/client",
+      "responsibility": "最小 Client 可执行文件"
+    },
+    "ugdr_daemon": {
+      "path": "apps/daemon",
+      "responsibility": "Control、Worker 与 GPU 的组合根"
+    }
+  },
+  "skeleton_document": {
+    "path": "docs/architecture/repository-skeleton.md",
+    "begin_marker": "<!-- BEGIN GENERATED: module-boundaries -->",
+    "end_marker": "<!-- END GENERATED: module-boundaries -->"
+  }
+}

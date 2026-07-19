@@ -1,0 +1,4 @@
+interface:
+  display_name: "UGDR 文档同步到 Markdown"
+  short_description: "仅将已完成审阅的飞书设计文档同步为仓库 Markdown"
+  default_prompt: "使用 $ugdr-sync-docs-to-md 检查 UGDR 飞书文档的‘已完成审阅’待办，仅在已勾选时同步成适合 Agent 使用的仓库 Markdown。"

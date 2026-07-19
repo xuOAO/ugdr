@@ -1,0 +1,4 @@
+interface:
+  display_name: "UGDR 步骤文档填充"
+  short_description: "按固定模板创建、续写、审查并填写 UGDR 步骤文档草稿"
+  default_prompt: "Use $ugdr-fill-step-doc to create or update a UGDR step document from a feature step item."
