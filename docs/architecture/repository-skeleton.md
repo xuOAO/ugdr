@@ -17,6 +17,11 @@ This document is the human-readable entry point for the repository skeleton. It 
 | `tests/smoke` | 仓库主路径最小运行检查 |
 | `tools` | 机器可执行的仓库规则与检查器 |
 | `docs/architecture` | 稳定架构与仓库边界说明 |
+| `docs/decisions` | 长期有效的项目决策记录 |
+| `docs/governance` | 机器可检查的文档治理规则 |
+| `docs/progress` | 执行过程与验证交接记录 |
+| `docs/status` | 唯一机器可读当前状态 |
+| `docs/v1_docs` | 已审阅 v1 设计的执行快照与索引 |
 
 ## Production targets
 

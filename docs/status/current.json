@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "version": "v1",
+  "feature": "F01",
+  "step": "F01-S02",
+  "state": "completed",
+  "next_actions": {
+    "F01": [
+      {
+        "step": "F01-S03",
+        "action": "推进 Bootstrap 与环境诊断"
+      }
+    ]
+  },
+  "blockers": [],
+  "updated_at": "2026-07-19T22:53:52+08:00",
+  "updated_by": "human"
+}

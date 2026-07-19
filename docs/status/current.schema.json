@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ugdr.local/schemas/project-state-v1.json",
+  "title": "UGDR project state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "version",
+    "feature",
+    "step",
+    "state",
+    "next_actions",
+    "blockers",
+    "updated_at",
+    "updated_by"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^v[1-9][0-9]*$"
+    },
+    "feature": {
+      "type": "string",
+      "pattern": "^(|F[0-9]{2})$"
+    },
+    "step": {
+      "type": "string",
+      "pattern": "^(|F[0-9]{2}-S[0-9]{2})$"
+    },
+    "state": {
+      "enum": [
+        "awaiting_review",
+        "ready_for_implementation",
+        "awaiting_acceptance",
+        "blocked",
+        "completed"
+      ]
+    },
+    "next_actions": {
+      "type": "object",
+      "patternProperties": {
+        "^F[0-9]{2}$": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^F[0-9]{2}-S[0-9]{2}$"
+              },
+              "uniqueItems": true
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "step",
+                  "action"
+                ],
+                "properties": {
+                  "step": {
+                    "type": "string",
+                    "pattern": "^F[0-9]{2}-S[0-9]{2}$"
+                  },
+                  "action": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_by": {
+      "enum": [
+        "human",
+        "agent"
+      ]
+    }
+  }
+}
