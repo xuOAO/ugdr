@@ -1,4 +1,4 @@
 interface:
   display_name: "UGDR 功能文档填充"
-  short_description: "按固定模板创建、续写、审查并填写 UGDR 功能文档草稿"
+  short_description: "填写 UGDR 功能文档，维护步骤 Mermaid DAG 和双待办关卡"
   default_prompt: "Use $ugdr-fill-feature-doc to create or update a UGDR feature document from a version feature item."

@@ -1,4 +1,4 @@
 interface:
   display_name: "UGDR 版本文档助手"
-  short_description: "在版本专属飞书目录中访谈并生成 UGDR 版本文档"
+  short_description: "填写 UGDR 版本文档，维护 Mermaid DAG 和双待办关卡"
   default_prompt: "使用 $ugdr-fill-version-doc 协助我创建 UGDR v1 版本专属目录，并填写版本文档。"
