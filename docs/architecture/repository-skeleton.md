@@ -4,6 +4,8 @@ This document is the human-readable entry point for the repository skeleton. It 
 
 `tools/module-boundaries.json` is the machine-readable source for required paths, production targets, and allowed production dependencies. The generated section below must match that policy. Change it only when a module boundary, target name, required top-level path, or allowed dependency changes.
 
+`tools/ugdr` is the repository-local Python entry for development harness commands. F01-S03 owns its `bootstrap` and `doctor` subcommands; their implementation remains under `tools/ugdr_cli` and does not change the production target dependency graph.
+
 <!-- BEGIN GENERATED: module-boundaries -->
 ## Repository areas
 

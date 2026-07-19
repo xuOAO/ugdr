@@ -47,3 +47,17 @@ add_test(
         --index ${PROJECT_SOURCE_DIR}/docs/v1_docs/README.md
         --state ${PROJECT_SOURCE_DIR}/docs/status/current.json
 )
+
+add_test(
+    NAME ugdr_environment_contract
+    COMMAND
+        ${Python3_EXECUTABLE}
+        -m
+        unittest
+        tests.integration.test_ugdr_environment
+)
+set_tests_properties(
+    ugdr_environment_contract
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
