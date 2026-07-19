@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+
+import argparse
+import sys
+from pathlib import Path
+
+from ugdr_cli.bootstrap import run_bootstrap
+from ugdr_cli.environment import render_human, render_json, run_doctor
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+
+
+def create_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="tools/ugdr")
+    subparsers = parser.add_subparsers(dest="command")
+
+    doctor = subparsers.add_parser("doctor", help="Diagnose the local development environment.")
+    doctor.add_argument("--json", action="store_true", dest="json_mode")
+
+    bootstrap = subparsers.add_parser(
+        "bootstrap", help="Diagnose the environment and initialize repository-local build metadata."
+    )
+    bootstrap.add_argument("--json", action="store_true", dest="json_mode")
+    bootstrap.add_argument("--build-dir", default="build")
+    return parser
+
+
+def main() -> int:
+    parser = create_parser()
+    args = parser.parse_args()
+    if args.command is None:
+        parser.print_help(sys.stderr)
+        return 2
+
+    if args.command == "doctor":
+        result = run_doctor()
+    else:
+        result = run_bootstrap(REPOSITORY_ROOT, args.build_dir)
+
+    rendered = render_json(result) if args.json_mode else render_human(result)
+    sys.stdout.write(rendered)
+    sys.stdout.write("\n")
+    return result.exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
