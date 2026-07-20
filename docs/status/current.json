@@ -3,9 +3,13 @@
   "version": "v1",
   "feature": "F02",
   "step": "F02-S01",
-  "state": "awaiting_acceptance",
-  "next_actions": {},
+  "state": "completed",
+  "next_actions": {
+    "F02": [
+      "F02-S02"
+    ]
+  },
   "blockers": [],
-  "updated_at": "2026-07-20T17:21:15+08:00",
-  "updated_by": "agent"
+  "updated_at": "2026-07-20T17:30:39+08:00",
+  "updated_by": "human"
 }
