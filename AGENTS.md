@@ -17,6 +17,13 @@
 - Keep `tools/module-boundaries.json` and the generated section in `docs/architecture/repository-skeleton.md` synchronized when the skeleton changes.
 - Keep durable decisions, current state, progress records, and temporary plans in their dedicated locations.
 
+### RDMA Semantic Alignment
+
+- Within the supported UGDR scope, align public APIs, object relationships, terminology, state transitions, error behavior, ordering, and completion semantics with standard RDMA/libibverbs behavior by default.
+- Use conventional verbs terminology at public and design boundaries: QP contains SQ and RQ; applications post Send/Receive WRs; CQs yield WCs. Use WQE/CQE only for internal or provider-level representations unless an interface intentionally exposes them.
+- Preserve operation-specific semantics, including the distinction between RDMA Write and RDMA Write With Immediate, receive-WR consumption, signaling, and local versus remote completion behavior.
+- Do not claim support outside the documented UGDR subset. Any intentional divergence required by the daemon, queue, or GPU architecture must be explicit in the reviewed design, recorded as a durable decision, and covered by focused tests.
+
 ### Feishu Account Routing
 
 - Before any `lark-cli` command or `lark-*` Skill operation, read `.agents/skills/lark-account-registry/SKILL.md` and resolve an account from `.lark`.
