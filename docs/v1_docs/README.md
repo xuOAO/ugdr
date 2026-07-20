@@ -9,3 +9,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F01-S03 Bootstrap 与环境诊断](F01_项目初始化与开发_Harness/F01-S03_Bootstrap_与环境诊断_步骤文档.md)
 - [F01-S04 统一质量命令与基础门禁](F01_项目初始化与开发_Harness/F01-S04_统一质量命令与基础门禁_步骤文档.md)
 - [F01-S05 Agent 协作工作流与自动编排](F01_项目初始化与开发_Harness/F01-S05_Agent_协作工作流与自动编排_步骤文档.md)
+- [F01-S06 干净 workspace 与新 Agent 会话验收](F01_项目初始化与开发_Harness/F01-S06_干净_workspace_与新_Agent_会话验收_步骤文档.md)
