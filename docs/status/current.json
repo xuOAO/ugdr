@@ -2,14 +2,10 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F02",
-  "step": "F02-S03",
-  "state": "completed",
-  "next_actions": {
-    "F02": [
-      "F02-S04"
-    ]
-  },
+  "step": "F02-S04",
+  "state": "ready_for_implementation",
+  "next_actions": {},
   "blockers": [],
-  "updated_at": "2026-07-20T23:38:20+08:00",
+  "updated_at": "2026-07-21T00:18:20+08:00",
   "updated_by": "human"
 }
