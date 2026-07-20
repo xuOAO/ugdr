@@ -13,3 +13,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F02 API 契约与对象模型功能文档](F02_API_契约与对象模型/F02_API_契约与对象模型_功能文档.md)
 - [F02-S01 v1 公开 API 表面与对齐基线](F02_API_契约与对象模型/F02-S01_v1_公开_API_表面与对齐基线_步骤文档.md)
 - [F02-S02 对象模型与生命周期契约](F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md)
+- [F02-S03 RC QP 建连与状态机契约](F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
