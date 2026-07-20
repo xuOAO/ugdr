@@ -3,7 +3,7 @@
   "version": "v1",
   "feature": "F01",
   "step": "F01-S05",
-  "state": "ready_for_implementation",
+  "state": "awaiting_review",
   "next_actions": {
     "F01": [
       {
@@ -13,6 +13,6 @@
     ]
   },
   "blockers": [],
-  "updated_at": "2026-07-20T10:49:36+08:00",
+  "updated_at": "2026-07-20T11:14:21+08:00",
   "updated_by": "agent"
 }
