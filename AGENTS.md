@@ -4,6 +4,7 @@
 
 - `docs/status/current.json`: machine-readable current scope, stable state, next actions, and blockers.
 - `docs/v1_docs/README.md`: index of reviewed design snapshots used for implementation.
+- `docs/contracts/`: reviewed Client-visible API and behavioral contracts.
 - `docs/decisions/`: durable decision records that do not belong in current state.
 - `docs/progress/`: execution and verification records that do not belong in current state.
 - `docs/architecture/repository-skeleton.md`: repository areas, targets, and dependency boundaries.
