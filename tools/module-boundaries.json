@@ -23,6 +23,7 @@
     "tests/smoke",
     "AGENTS.md",
     "docs/decisions/README.md",
+    "docs/contracts/README.md",
     "docs/governance/document-policy.json",
     "docs/progress/README.md",
     "docs/status/current.json",
@@ -81,6 +82,10 @@
     {
       "path": "docs/decisions",
       "responsibility": "长期有效的项目决策记录"
+    },
+    {
+      "path": "docs/contracts",
+      "responsibility": "已审阅的 Client 可观察 API 与行为契约"
     },
     {
       "path": "docs/governance",

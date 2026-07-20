@@ -20,6 +20,7 @@ This document is the human-readable entry point for the repository skeleton. It 
 | `tools` | 机器可执行的仓库规则与检查器 |
 | `docs/architecture` | 稳定架构与仓库边界说明 |
 | `docs/decisions` | 长期有效的项目决策记录 |
+| `docs/contracts` | 已审阅的 Client 可观察 API 与行为契约 |
 | `docs/governance` | 机器可检查的文档治理规则 |
 | `docs/progress` | 执行过程与验证交接记录 |
 | `docs/status` | 唯一机器可读当前状态 |

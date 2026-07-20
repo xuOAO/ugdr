@@ -3,6 +3,7 @@
   "required_paths": [
     "AGENTS.md",
     "docs/architecture/repository-skeleton.md",
+    "docs/contracts/README.md",
     "docs/decisions/README.md",
     "docs/governance/document-policy.json",
     "docs/progress/README.md",
@@ -49,6 +50,7 @@
   "link_check_paths": [
     "AGENTS.md",
     "docs/architecture/repository-skeleton.md",
+    "docs/contracts",
     "docs/decisions",
     "docs/progress",
     "docs/v1_docs"
