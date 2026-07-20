@@ -41,6 +41,12 @@ typedef enum ugdr_qp_state {
     UGDR_QPS_UNKNOWN = 7,
 } ugdr_qp_state;
 
+typedef enum ugdr_qp_attr_mask {
+    UGDR_QP_STATE = 1U << 0U,
+    UGDR_QP_CUR_STATE = 1U << 1U,
+    UGDR_QP_ACCESS_FLAGS = 1U << 3U,
+} ugdr_qp_attr_mask;
+
 typedef enum ugdr_wr_opcode {
     UGDR_WR_RDMA_WRITE = 0,
     UGDR_WR_RDMA_WRITE_WITH_IMM = 1,
@@ -74,6 +80,28 @@ typedef enum ugdr_access_flags {
     UGDR_ACCESS_LOCAL_WRITE = 1U << 0U,
     UGDR_ACCESS_REMOTE_WRITE = 1U << 1U,
 } ugdr_access_flags;
+
+struct ugdr_qp_init_attr {
+    ugdr_cq *send_cq;
+    ugdr_cq *recv_cq;
+    uint32_t max_send_wr;
+    uint32_t max_recv_wr;
+    uint32_t max_send_sge;
+    uint32_t max_recv_sge;
+    ugdr_qp_type qp_type;
+    int sq_sig_all;
+};
+
+struct ugdr_qp_attr {
+    ugdr_qp_state qp_state;
+    ugdr_qp_state cur_qp_state;
+    int qp_access_flags;
+};
+
+struct ugdr_qp_conn_info {
+    uint32_t qp_num;
+    uint64_t endpoint_id;
+};
 
 ugdr_device **ugdr_get_device_list(int *num_devices) UGDR_NOEXCEPT;
 void ugdr_free_device_list(ugdr_device **list) UGDR_NOEXCEPT;

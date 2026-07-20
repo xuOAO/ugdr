@@ -13,6 +13,10 @@ Lifecycle source:
 
 - [F02-S02 对象模型与生命周期契约](../v1_docs/F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md), Feishu revision 17.
 
+RC QP source:
+
+- [F02-S03 RC QP 建连与状态机契约](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md), Feishu revision 7.
+
 Current contracts:
 
 - [Public API](public-api.md): v1 symbol surface and placeholder failure rules.
@@ -20,7 +24,9 @@ Current contracts:
   differences.
 - [Object lifecycle](object-lifecycle.md): ownership, references, strict child-first destruction,
   and handle failure semantics.
+- [RC QP state machine](rc-qp-state-machine.md): public QP records, connection identity, legal
+  transitions, error results, and atomic same-daemon connect.
 
-Future reviewed F02 steps add the RC QP state machine and WR/WC semantics here.
+Future reviewed F02 steps add WR/WC semantics here.
 No file in this directory may define IPC encoding, internal WQE/CQE layout, worker scheduling, or
 GPU metadata.

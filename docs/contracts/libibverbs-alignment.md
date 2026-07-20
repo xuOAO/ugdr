@@ -4,6 +4,7 @@ Sources:
 
 - [reviewed F02-S01 revision 16](../v1_docs/F02_API_契约与对象模型/F02-S01_v1_公开_API_表面与对齐基线_步骤文档.md)
 - [reviewed F02-S02 revision 17](../v1_docs/F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md)
+- [reviewed F02-S03 revision 7](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
 
 Status meanings:
 
@@ -20,11 +21,12 @@ Status meanings:
 |-|-|-|-|
 | `ugdr_device`, `ugdr_context`, `ugdr_pd`, `ugdr_mr`, `ugdr_cq`, `ugdr_qp` | Corresponding `ibv_*` object | aligned | Opaque public handles. F02-S02 fixes their ownership, reference, and strict child-first lifecycle behavior. |
 | `ugdr_comp_channel` | `ibv_comp_channel` | unsupported | The opaque name preserves `create_cq` signature alignment; v1 has no completion-event API. |
-| `ugdr_qp_init_attr`, `ugdr_qp_attr` | `ibv_qp_init_attr`, `ibv_qp_attr` | pending | F02-S02 fixes the same-Context PD/CQ relationship; precise public fields and state attributes remain F02-S03. |
-| `ugdr_qp_conn_info` | No single verbs record | UGDR extension | Connection exchange fields and encoding are pending F02-S03. |
+| `ugdr_qp_init_attr`, `ugdr_qp_attr` | `ibv_qp_init_attr`, `ibv_qp_attr` | aligned | v1 exposes the RC creation capacities, send/receive CQs, signaling default, state/current-state, and access fields needed by the supported subset; SRQ, inline data, and hardware/network attributes are omitted. |
+| `ugdr_qp_attr_mask` | `ibv_qp_attr_mask` | aligned | State, current-state, and access-flags use bits 0, 1, and 3. Other mask bits are outside v1. |
+| `ugdr_qp_conn_info` | No single verbs record | UGDR extension | Contains `qp_num` plus a generation-safe same-daemon `endpoint_id`. It is neither an address-vector record nor a serialized wire format. |
 | `ugdr_sge`, `ugdr_send_wr`, `ugdr_recv_wr`, `ugdr_wc` | Corresponding `ibv_*` record | pending | Public names are frozen; fields and semantics are owned by F02-S04. |
 | `ugdr_qp_type` | `ibv_qp_type` | aligned | Only RC value 2 is exposed. |
-| `ugdr_qp_state` | `ibv_qp_state` | aligned | Values 0 through 7 match `IBV_QPS_*`; legal transitions remain pending. |
+| `ugdr_qp_state` | `ibv_qp_state` | aligned | Values 0 through 7 match `IBV_QPS_*`. v1 supports RESET to INIT, staged INIT to RTR to RTS, and entry to ERR; SQD/SQE transitions are unsupported. |
 | `ugdr_wr_opcode` | `ibv_wr_opcode` | aligned | Only values 0 and 1 are exposed. |
 | `ugdr_send_flags` | `ibv_send_flags` | aligned | Only `SIGNALED` value `1 << 1` is exposed. |
 | `ugdr_wc_status` | `ibv_wc_status` | aligned | Relevant v1 names use standard numeric values; generation remains pending. |
@@ -44,9 +46,9 @@ Status meanings:
 | `ugdr_create_cq` | `ibv_create_cq` | aligned | The five-argument shape is preserved; v1 callers use a null event channel and completion vector 0. |
 | `ugdr_destroy_cq` | `ibv_destroy_cq` | aligned | Returns the errno value on failure and reports `EBUSY` while any QP references the CQ. |
 | `ugdr_poll_cq` | `ibv_poll_cq` | aligned | Uses the standard negative error domain and never writes `wc` on the placeholder path. |
-| `ugdr_create_qp`, `ugdr_destroy_qp` | `ibv_create_qp`, `ibv_destroy_qp` | aligned | RC-only. A QP owns internal SQ/RQ, references its CQs, and must share one Context with its PD and CQs. Precise init fields remain F02-S03. |
-| `ugdr_modify_qp`, `ugdr_query_qp` | `ibv_modify_qp`, `ibv_query_qp` | pending | Symbol shape and return domain are frozen; attr masks and fields are pending F02-S02/S03. |
-| `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Application exchange plus `ibv_modify_qp` | UGDR extension | Exact connection record and transition sequence are pending F02-S03. |
+| `ugdr_create_qp`, `ugdr_destroy_qp` | `ibv_create_qp`, `ibv_destroy_qp` | aligned | RC-only. The init record exposes CQs, WR capacities, SGE maxima, type, and `sq_sig_all`. A QP owns internal SQ/RQ, references its CQs, and must share one Context with its PD and CQs. |
+| `ugdr_modify_qp`, `ugdr_query_qp` | `ibv_modify_qp`, `ibv_query_qp` | aligned | Uses the standard direct errno return domain and aligned state/current-state/access mask bits for the v1 transition subset. Invalid requests fail without changing state or outputs. |
+| `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Application exchange plus two `ibv_modify_qp` transitions | UGDR extension | Query returns `qp_num` and `endpoint_id`. Connect atomically stages INIT to RTR to RTS in one same-daemon helper and never advances the remote QP. |
 | `ugdr_post_send`, `ugdr_post_recv` | `ibv_post_send`, `ibv_post_recv` | pending | Return the errno value; WR fields, `bad_wr`, and consumption semantics are pending F02-S04. |
 
 ## Lifecycle alignment and strict guarantees
@@ -65,8 +67,25 @@ The strict guarantees are recorded in
 [Decision 0002](../decisions/0002-strict-object-lifecycle.md). In-flight WR/WC destruction
 behavior is not classified here until F02-S04 is reviewed.
 
+## QP state and connection alignment
+
+| Behavior | Status | Contract |
+|-|-|-|
+| QP creation starts in RESET | aligned | A successful runtime create produces a live RC QP in `UGDR_QPS_RESET`. |
+| RESET to INIT | aligned | `ugdr_modify_qp` requires state and access masks, exact Remote Write access, and an optional matching current-state guard. |
+| INIT to RTR to RTS | UGDR extension | `ugdr_connect_qp` applies the standard state sequence as one atomic same-daemon commit using generation-safe peer identity. |
+| Enter ERR | aligned | RESET, INIT, RTR, and RTS can enter ERR. WR flush and WC consequences remain F02-S04. |
+| Failure atomicity | UGDR strict guarantee | Invalid transitions, stale endpoints, and peer conflicts do not expose partial state, peer binding, output writes, or remote changes. |
+| SQD/SQE state values | unsupported | Numeric values are retained for alignment, but transition requests return `EOPNOTSUPP`. |
+| Hardware/network connection attributes | unsupported | v1 exposes no GID, LID, MTU, PSN, address vector, IP, port, retry, or serialized connection format. |
+
+The same-daemon atomic helper is recorded in
+[Decision 0003](../decisions/0003-atomic-rc-connect-helper.md), and its complete state/error matrix
+is in [RC QP State Machine](rc-qp-state-machine.md).
+
 ## Unsupported v1 surface
 
 `query_device`, non-RC transports, RDMA Read, Send/Recv data operations, atomics, SRQ, completion
-events, and extended verbs are not exposed by F02-S01. Adding any of them requires reviewed F02
-design and an updated matrix rather than an undocumented public declaration.
+events, SQD/SQE transitions, hardware/network path attributes, and extended verbs are not exposed
+by the reviewed F02 subset. Adding any of them requires reviewed F02 design and an updated matrix
+rather than an undocumented public declaration.
