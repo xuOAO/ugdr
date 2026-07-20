@@ -2,17 +2,17 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F01",
-  "step": "F01-S04",
-  "state": "completed",
+  "step": "F01-S05",
+  "state": "ready_for_implementation",
   "next_actions": {
     "F01": [
       {
-        "step": "F01-S05",
-        "action": "推进 Agent 协作工作流与自动编排"
+        "step": "F01-S06",
+        "action": "推进干净 workspace 与新 Agent 会话验收"
       }
     ]
   },
   "blockers": [],
-  "updated_at": "2026-07-20T08:24:16+08:00",
-  "updated_by": "human"
+  "updated_at": "2026-07-20T10:49:36+08:00",
+  "updated_by": "agent"
 }
