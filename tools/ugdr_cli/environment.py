@@ -1,11 +1,18 @@
 """Deterministic environment probes used by the UGDR command."""
 
-import json
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
+
+from .result import (
+    STATUS_FAIL,
+    STATUS_PASS,
+    CheckResult,
+    CommandResult,
+    render_human,
+    render_json,
+)
 
 
 REQUIRED_BASE_COMMANDS = (
@@ -23,56 +30,8 @@ CUDA_VERSION_UPPER = (13, 0)
 CUDA_REQUIRED_RANGE = "12 < version < 13"
 COMMAND_TIMEOUT_SECONDS = 5.0
 
-STATUS_PASS = "PASS"
-STATUS_FAIL = "FAIL"
-
 Which = Callable[[str], Optional[str]]
 Runner = Callable[[Sequence[str], float], subprocess.CompletedProcess]
-
-
-@dataclass(frozen=True)
-class CheckResult:
-    check_id: str
-    required: bool
-    status: str
-    path: str
-    diagnostic: str
-    remediation: str
-    details: Dict[str, object] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, object]:
-        value = {
-            "id": self.check_id,
-            "required": self.required,
-            "status": self.status,
-            "path": self.path,
-            "diagnostic": self.diagnostic,
-            "remediation": self.remediation,
-        }
-        value.update(self.details)
-        return value
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    command: str
-    checks: Tuple[CheckResult, ...]
-    exit_code: int
-
-    def to_payload(self) -> Dict[str, object]:
-        passed = sum(check.status == STATUS_PASS for check in self.checks)
-        failed = len(self.checks) - passed
-        return {
-            "command": self.command,
-            "ok": self.exit_code == 0,
-            "checks": [check.to_dict() for check in self.checks],
-            "summary": {
-                "total": len(self.checks),
-                "passed": passed,
-                "failed": failed,
-            },
-            "exit_code": self.exit_code,
-        }
 
 
 def default_runner(command: Sequence[str], timeout: float) -> subprocess.CompletedProcess:
@@ -293,23 +252,3 @@ def run_doctor(
 ) -> CommandResult:
     checks = probe_environment(which=which, runner=runner, timeout=timeout)
     return CommandResult("doctor", checks, select_exit_code(checks))
-
-
-def render_json(result: CommandResult) -> str:
-    return json.dumps(result.to_payload(), ensure_ascii=False, indent=2)
-
-
-def render_human(result: CommandResult) -> str:
-    lines = [
-        "{} {}: {}".format(check.status, check.check_id, check.diagnostic)
-        for check in result.checks
-    ]
-    summary = result.to_payload()["summary"]
-    lines.append(
-        "summary: {passed} passed, {failed} failed, exit_code={exit_code}".format(
-            passed=summary["passed"],
-            failed=summary["failed"],
-            exit_code=result.exit_code,
-        )
-    )
-    return "\n".join(lines)

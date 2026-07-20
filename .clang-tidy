@@ -1,0 +1,4 @@
+Checks: '-*,clang-analyzer-*,bugprone-*'
+WarningsAsErrors: '*'
+HeaderFilterRegex: '^(include|src|apps)/'
+FormatStyle: file

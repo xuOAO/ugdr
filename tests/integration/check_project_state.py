@@ -215,6 +215,100 @@ def main() -> int:
         expect_code(process, 3, "completed state was reopened")
         assert_unchanged(state_path, before, "terminal transition modified current.json")
 
+        process = run(
+            args.python,
+            args.script,
+            root,
+            "advance-scope",
+            "--to",
+            "awaiting_acceptance",
+            "--updated-by",
+            "agent",
+            "--version",
+            "v1",
+            "--feature",
+            "F01",
+            "--step",
+            "F01-S03",
+            "--clear-next-actions",
+            "--verification-passed",
+            "--human-confirmed",
+        )
+        expect_code(process, 3, "agent was allowed to advance the completed scope")
+        assert_unchanged(state_path, before, "failed scope advancement modified current.json")
+
+        process = run(
+            args.python,
+            args.script,
+            root,
+            "advance-scope",
+            "--to",
+            "awaiting_acceptance",
+            "--updated-by",
+            "human",
+            "--version",
+            "v1",
+            "--feature",
+            "F01",
+            "--step",
+            "F01-S02",
+            "--clear-next-actions",
+            "--verification-passed",
+            "--human-confirmed",
+        )
+        expect_code(process, 3, "completed scope was reopened as the same scope")
+        assert_unchanged(state_path, before, "same-scope advancement modified current.json")
+
+        process = run(
+            args.python,
+            args.script,
+            root,
+            "advance-scope",
+            "--to",
+            "awaiting_acceptance",
+            "--updated-by",
+            "human",
+            "--version",
+            "v1",
+            "--feature",
+            "F01",
+            "--step",
+            "F01-S03",
+            "--clear-next-actions",
+            "--human-confirmed",
+        )
+        expect_code(process, 3, "scope advancement bypassed verification")
+        assert_unchanged(state_path, before, "unverified scope advancement modified current.json")
+
+        inode_before = state_path.stat().st_ino
+        process = run(
+            args.python,
+            args.script,
+            root,
+            "advance-scope",
+            "--to",
+            "awaiting_acceptance",
+            "--updated-by",
+            "human",
+            "--version",
+            "v1",
+            "--feature",
+            "F01",
+            "--step",
+            "F01-S03",
+            "--clear-next-actions",
+            "--verification-passed",
+            "--human-confirmed",
+        )
+        expect_code(process, 0, "valid scope advancement was rejected")
+        advanced = json.loads(state_path.read_text(encoding="utf-8"))
+        if state_path.stat().st_ino == inode_before:
+            fail("successful scope advancement did not atomically replace current.json")
+        if advanced["step"] != "F01-S03" or advanced["state"] != "awaiting_acceptance":
+            fail("scope advancement wrote the wrong scope or state")
+        if advanced["next_actions"]:
+            fail("scope advancement did not clear next_actions")
+
         write_json(state_path, state_value("ready_for_implementation"))
         before = state_path.read_bytes()
         process = run(

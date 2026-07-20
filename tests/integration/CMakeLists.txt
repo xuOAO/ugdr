@@ -47,6 +47,11 @@ add_test(
         --index ${PROJECT_SOURCE_DIR}/docs/v1_docs/README.md
         --state ${PROJECT_SOURCE_DIR}/docs/status/current.json
 )
+set_tests_properties(
+    project_handoff_surface
+    PROPERTIES
+        LABELS "ugdr_smoke"
+)
 
 add_test(
     NAME ugdr_environment_contract
@@ -58,6 +63,20 @@ add_test(
 )
 set_tests_properties(
     ugdr_environment_contract
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+
+add_test(
+    NAME ugdr_quality_contract
+    COMMAND
+        ${Python3_EXECUTABLE}
+        -m
+        unittest
+        tests.integration.test_ugdr_quality
+)
+set_tests_properties(
+    ugdr_quality_contract
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )

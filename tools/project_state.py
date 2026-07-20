@@ -243,7 +243,11 @@ def validate_target_gate(root: Path, current: Dict, candidate: Dict, args) -> Li
     target = candidate["state"]
     source = current["state"]
 
-    if target == "ready_for_implementation" and source in {"awaiting_review", "blocked"}:
+    if target == "ready_for_implementation" and source in {
+        "awaiting_review",
+        "blocked",
+        "completed",
+    }:
         if not args.reviewed_doc:
             errors.append(issue("$gate.reviewed_doc", "at least one --reviewed-doc is required"))
         for index, relative in enumerate(args.reviewed_doc or []):
@@ -400,8 +404,105 @@ def command_transition(args) -> int:
     return 0
 
 
+def command_advance_scope(args) -> int:
+    root = Path(args.root).resolve()
+    state_path, schema_path = state_paths(root)
+    try:
+        schema = load_json(schema_path)
+        current = load_json(state_path)
+    except ProjectStateError as error:
+        emit({"status": "error", "errors": [issue("$", str(error))]}, stream=sys.stderr)
+        return 2
+
+    current_errors = validate_state_value(current, schema)
+    if current_errors:
+        emit({"status": "error", "errors": current_errors}, stream=sys.stderr)
+        return 2
+
+    target = args.target
+    errors = []
+    if current["state"] != "completed":
+        errors.append(issue("$.state", "scope advancement requires completed state", current["state"]))
+    if not args.human_confirmed:
+        errors.append(issue("$gate.human_confirmed", "--human-confirmed is required"))
+    if args.updated_by != "human":
+        errors.append(issue("$.updated_by", "scope advancement requires updated_by=human"))
+
+    current_scope = (current["version"], current["feature"], current["step"])
+    target_scope = (args.version, args.feature, args.step)
+    if target_scope == current_scope:
+        errors.append(issue("$scope", "scope advancement must select a new scope", list(target_scope)))
+
+    candidate = copy.deepcopy(current)
+    candidate.update(
+        {
+            "version": args.version,
+            "feature": args.feature,
+            "step": args.step,
+            "state": target,
+            "updated_by": args.updated_by,
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "blockers": list(args.blocker) if target == "blocked" else [],
+        }
+    )
+
+    if args.clear_next_actions:
+        candidate["next_actions"] = {}
+    else:
+        try:
+            next_actions_path = resolve_inside(root, args.next_actions_file, "--next-actions-file")
+            candidate["next_actions"] = load_json(next_actions_path)
+        except ProjectStateError as error:
+            errors.append(issue("$.next_actions", str(error)))
+
+    errors.extend(validate_state_value(candidate, schema))
+    errors.extend(validate_target_gate(root, current, candidate, args))
+    if errors:
+        emit(
+            {
+                "status": "rejected",
+                "current_state": current["state"],
+                "target_state": target,
+                "errors": errors,
+            },
+            stream=sys.stderr,
+        )
+        return 3
+
+    changes = {
+        key: {"before": current.get(key), "after": candidate.get(key)}
+        for key in sorted(STATE_KEYS)
+        if current.get(key) != candidate.get(key)
+    }
+    if args.dry_run:
+        emit(
+            {
+                "status": "dry_run",
+                "current_state": current["state"],
+                "target_state": target,
+                "changes": changes,
+            }
+        )
+        return 0
+
+    try:
+        atomic_write_json(state_path, candidate)
+    except OSError as error:
+        emit({"status": "error", "message": str(error)}, stream=sys.stderr)
+        return 4
+    emit(
+        {
+            "status": "advanced",
+            "current_state": current["state"],
+            "target_state": target,
+            "changes": changes,
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Validate and transition UGDR project state.")
+    parser = argparse.ArgumentParser(description="Validate and update UGDR project state.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate_parser = subparsers.add_parser("validate", help="Validate current project state.")
@@ -422,6 +523,27 @@ def build_parser() -> argparse.ArgumentParser:
     transition_parser.add_argument("--human-confirmed", action="store_true")
     transition_parser.add_argument("--dry-run", action="store_true")
     transition_parser.set_defaults(handler=command_transition)
+
+    advance_parser = subparsers.add_parser(
+        "advance-scope", help="Start an explicitly confirmed scope after a completed scope."
+    )
+    advance_parser.add_argument("--root", default=".", help="Repository root.")
+    advance_parser.add_argument(
+        "--to", dest="target", choices=sorted(STATES - {"completed"}), required=True
+    )
+    advance_parser.add_argument("--updated-by", choices=("human", "agent"), required=True)
+    advance_parser.add_argument("--version", required=True)
+    advance_parser.add_argument("--feature", required=True)
+    advance_parser.add_argument("--step", required=True)
+    next_actions_group = advance_parser.add_mutually_exclusive_group(required=True)
+    next_actions_group.add_argument("--next-actions-file")
+    next_actions_group.add_argument("--clear-next-actions", action="store_true")
+    advance_parser.add_argument("--blocker", action="append", default=[])
+    advance_parser.add_argument("--reviewed-doc", action="append", default=[])
+    advance_parser.add_argument("--verification-passed", action="store_true")
+    advance_parser.add_argument("--human-confirmed", action="store_true")
+    advance_parser.add_argument("--dry-run", action="store_true")
+    advance_parser.set_defaults(handler=command_advance_scope)
     return parser
 
 
