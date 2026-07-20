@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "account_id": "docs-owner",
+  "label": "文档维护用户",
+  "identity": "user",
+  "purposes": [
+    "docs",
+    "drive",
+    "comments"
+  ],
+  "enabled": true
+}

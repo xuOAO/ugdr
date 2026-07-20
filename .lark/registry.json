@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "accounts_dir": "accounts",
+  "local_profiles_file": "local/profiles.json",
+  "selection_policy": "ask_when_multiple"
+}

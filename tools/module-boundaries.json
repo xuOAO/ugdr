@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "required_paths": [
+    ".clang-format",
+    ".clang-tidy",
     "CMakeLists.txt",
     "include/ugdr",
     "src/api",
@@ -10,8 +12,29 @@
     "apps/client",
     "apps/daemon",
     "tests/unit",
+    "tests/__init__.py",
     "tests/integration",
+    "tests/integration/__init__.py",
+    "tests/integration/test_ugdr_environment.py",
+    "tests/integration/test_ugdr_quality.py",
     "tests/smoke",
+    "AGENTS.md",
+    "docs/decisions/README.md",
+    "docs/governance/document-policy.json",
+    "docs/progress/README.md",
+    "docs/status/current.json",
+    "docs/status/current.schema.json",
+    "docs/v1_docs/README.md",
+    "tools/check_project_docs.py",
+    "tools/project_state.py",
+    "tools/ugdr",
+    "tools/ugdr_cli",
+    "tools/ugdr_cli/__init__.py",
+    "tools/ugdr_cli/environment.py",
+    "tools/ugdr_cli/bootstrap.py",
+    "tools/ugdr_cli/result.py",
+    "tools/ugdr_cli/quality.py",
+    "tools/ugdr_cli/build.py",
     "tools/module-boundaries.json",
     "tools/check_module_boundaries.py",
     "docs/architecture/repository-skeleton.md"
@@ -48,6 +71,26 @@
     {
       "path": "docs/architecture",
       "responsibility": "稳定架构与仓库边界说明"
+    },
+    {
+      "path": "docs/decisions",
+      "responsibility": "长期有效的项目决策记录"
+    },
+    {
+      "path": "docs/governance",
+      "responsibility": "机器可检查的文档治理规则"
+    },
+    {
+      "path": "docs/progress",
+      "responsibility": "执行过程与验证交接记录"
+    },
+    {
+      "path": "docs/status",
+      "responsibility": "唯一机器可读当前状态"
+    },
+    {
+      "path": "docs/v1_docs",
+      "responsibility": "已审阅 v1 设计的执行快照与索引"
     }
   ],
   "production_targets": [

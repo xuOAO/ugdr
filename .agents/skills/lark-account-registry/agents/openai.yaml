@@ -1,0 +1,4 @@
+interface:
+  display_name: "飞书账户注册与选择"
+  short_description: "登记并解析仓库飞书账户，确保所有飞书操作固定使用已确认身份"
+  default_prompt: "使用 $lark-account-registry 登记并选择本仓库的飞书账户。"

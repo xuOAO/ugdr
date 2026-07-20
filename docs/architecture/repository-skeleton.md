@@ -4,6 +4,8 @@ This document is the human-readable entry point for the repository skeleton. It 
 
 `tools/module-boundaries.json` is the machine-readable source for required paths, production targets, and allowed production dependencies. The generated section below must match that policy. Change it only when a module boundary, target name, required top-level path, or allowed dependency changes.
 
+`tools/ugdr` is the repository-local Python entry for development harness commands. F01-S03 owns its `bootstrap` and `doctor` subcommands; F01-S04 adds `format`, `lint`, `build`, `test`, and `smoke`. Their implementation remains under `tools/ugdr_cli`, uses `.clang-format` and `.clang-tidy` as repository quality rules, and does not change the production target dependency graph.
+
 <!-- BEGIN GENERATED: module-boundaries -->
 ## Repository areas
 
@@ -17,6 +19,11 @@ This document is the human-readable entry point for the repository skeleton. It 
 | `tests/smoke` | 仓库主路径最小运行检查 |
 | `tools` | 机器可执行的仓库规则与检查器 |
 | `docs/architecture` | 稳定架构与仓库边界说明 |
+| `docs/decisions` | 长期有效的项目决策记录 |
+| `docs/governance` | 机器可检查的文档治理规则 |
+| `docs/progress` | 执行过程与验证交接记录 |
+| `docs/status` | 唯一机器可读当前状态 |
+| `docs/v1_docs` | 已审阅 v1 设计的执行快照与索引 |
 
 ## Production targets
 

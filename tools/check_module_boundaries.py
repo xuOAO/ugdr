@@ -276,14 +276,21 @@ def check_skeleton_document(root: Path, policy: Dict) -> List[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check UGDR module boundaries.")
     parser.add_argument("--root", default=".", help="Repository root.")
-    parser.add_argument("--build-dir", required=True, help="Configured CMake build directory.")
-    return parser.parse_args()
+    parser.add_argument("--build-dir", help="Configured CMake build directory.")
+    parser.add_argument(
+        "--skeleton-only",
+        action="store_true",
+        help="Check only the generated repository skeleton section.",
+    )
+    args = parser.parse_args()
+    if not args.skeleton_only and not args.build_dir:
+        parser.error("--build-dir is required unless --skeleton-only is used")
+    return args
 
 
 def main() -> int:
     args = parse_args()
     root = Path(args.root).resolve()
-    build_dir = Path(args.build_dir).resolve()
     policy_path = root / "tools" / "module-boundaries.json"
 
     try:
@@ -294,7 +301,10 @@ def main() -> int:
         return 1
 
     errors = validate_policy(policy)
-    if not errors:
+    if not errors and args.skeleton_only:
+        errors.extend(check_skeleton_document(root, policy))
+    elif not errors:
+        build_dir = Path(args.build_dir).resolve()
         required_paths = policy["required_paths"] + [
             area["path"] for area in policy["repository_areas"]
         ]
@@ -308,17 +318,21 @@ def main() -> int:
             errors.extend(check_targets_and_edges(policy, graph))
 
     if errors:
-        print("module-boundaries: FAIL", file=sys.stderr)
+        label = "repository-skeleton" if args.skeleton_only else "module-boundaries"
+        print("{}: FAIL".format(label), file=sys.stderr)
         for error in errors:
             print("- {}".format(error), file=sys.stderr)
         return 1
 
-    print(
-        "module-boundaries: OK ({} production targets, {} allowed edges)".format(
-            len(policy["production_targets"]),
-            len(policy["allowed_edges"]),
+    if args.skeleton_only:
+        print("repository-skeleton: OK")
+    else:
+        print(
+            "module-boundaries: OK ({} production targets, {} allowed edges)".format(
+                len(policy["production_targets"]),
+                len(policy["allowed_edges"]),
+            )
         )
-    )
     return 0
 
 

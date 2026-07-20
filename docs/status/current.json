@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "version": "v1",
+  "feature": "F01",
+  "step": "F01-S04",
+  "state": "completed",
+  "next_actions": {
+    "F01": [
+      {
+        "step": "F01-S05",
+        "action": "推进 Agent 协作工作流与自动编排"
+      }
+    ]
+  },
+  "blockers": [],
+  "updated_at": "2026-07-20T08:24:16+08:00",
+  "updated_by": "human"
+}

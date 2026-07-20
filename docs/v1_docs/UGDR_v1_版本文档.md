@@ -4,13 +4,13 @@ source_token: "Jlk1dR0FloLvT7xdypscwfL0nKh"
 source_url: "https://my.feishu.cn/docx/Jlk1dR0FloLvT7xdypscwfL0nKh"
 source_path: "我的空间 / UGDR / UGDR_v1 设计 / UGDR_v1 版本文档"
 source_title: "UGDR_v1 版本文档"
-source_revision: 68
+source_revision: 73
 doc_type: "version"
 content_mode: "agent"
 review_status: "reviewed"
-synced_at: "2026-07-18T21:54:38+08:00"
+synced_at: "2026-07-19T19:12:56+08:00"
 generated_by: "ugdr-sync-docs-to-md"
-generated_body_sha256: "26da9221fa00d82f0e9d261939312dbad8dc73f00bbf47fdd9ca485adf2ad2e6"
+generated_body_sha256: "176dabad4a70b8185b2e21032b6013145c773bb90dd0fa4a1a4dd1f2f1841843"
 ---
 # UGDR_v1 版本文档
 
@@ -129,6 +129,44 @@ UGDR v1 采用以下功能划分。此处只定义功能级职责、边界和依
 | F05 | Loop Worker 与本地 RC Write 数据路径 | 实现 rdma_write 和 rdma_write_with_imm 的 WR 读取、内部 datagram 封包、本地队列、解包、目标 MR 定位、receive WQE 校验与消费、拷贝任务提交、完成 meta 消费和 CQE 生成。 | 不实现 IP/UDP、MLX5/DPDK 网络传输、网络线格式、分片或可靠性协议，也不支持 read、Send/Recv 数据操作和 atomic。 | F01、F02、F03、F04；F06。 |
 | F06 | Persistent Memcpy Kernel 与 GPU Buffer | 持续运行的 GPU kernel 消费 copy task meta，对真实 GPU buffer 执行拷贝，并生产包含成功或失败结果的 completion meta 供 loop worker 消费。 | 不在版本文档中确定 kernel 实现、stream 同步、队列内存序、通知机制和性能优化参数。 | F01、F04、F05；可用 GPU 验证环境。 |
 | F07 | 单机运行时 Harness 与结果回写 | 建立两个 client 进程加一个 daemon 进程的验证集合，覆盖 build、最小 API、WQ/RQ/CQ、datagram、RNR 与错误路径、persistent kernel 协作、真实 GPU correctness 和结果回写。 | 不包含双机 benchmark、完整 CI/CD、生产级故障注入和性能关闭阈值。 | 项目工作明细；F01-F06 的验收标准。 |
+
+**功能依赖 DAG（一致性待确认）：**
+
+功能表是依赖关系的唯一事实源。按当前依赖列检查，F05 依赖 F06，同时 F06 依赖 F05，形成循环，暂不能宣称完整功能图为 DAG。循环解除前，当前可确定的并行前沿只有 F01；F01 完成后可启动 F02；F02 完成后可并行推进 F03 与 F04。
+
+| 检查项 | 结果 | 处理 |
+|-|-|-|
+| 已覆盖节点 | F01、F02、F03、F04、F05、F06、F07 | 节点集合与功能表一致。 |
+| 已确认无环边 | F01 -> F02；F02 -> F03；F02 -> F04；F03 -> F05；F04 -> F05；F04 -> F06；F01-F06 -> F07 | 可用于识别当前无依赖前沿。 |
+| 待确认循环 | F05 -> F06；F06 -> F05 | 需要确认 F06 是否只依赖 F04，或将 F05/F06 拆成更细功能后再生成完整 DAG。 |
+
+**当前可用的部分依赖图：**
+
+```mermaid
+flowchart LR
+    F01[F01 项目初始化与开发 Harness]
+    F02[F02 API 与对象模型]
+    F03[F03 Daemon 管理与控制面]
+    F04[F04 WQ/RQ/CQ 队列系统]
+    F05[F05 Loop Worker 与本地 RC Write 数据路径]
+    F06[F06 Persistent Memcpy Kernel 与 GPU Buffer]
+    F07[F07 单机运行时 Harness 与结果回写]
+
+    F01 --> F02
+    F02 --> F03
+    F02 --> F04
+    F03 --> F05
+    F04 --> F05
+    F04 --> F06
+    F05 -. 待确认循环 .-> F06
+    F06 -. 待确认循环 .-> F05
+    F01 --> F07
+    F02 --> F07
+    F03 --> F07
+    F04 --> F07
+    F05 --> F07
+    F06 --> F07
+```
 
 ## 八、版本验收标准
 

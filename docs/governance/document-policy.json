@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "required_paths": [
+    "AGENTS.md",
+    "docs/architecture/repository-skeleton.md",
+    "docs/decisions/README.md",
+    "docs/governance/document-policy.json",
+    "docs/progress/README.md",
+    "docs/status/current.json",
+    "docs/status/current.schema.json",
+    "docs/v1_docs/README.md",
+    "tools/check_project_docs.py",
+    "tools/project_state.py"
+  ],
+  "max_lines": {
+    "AGENTS.md": 150,
+    "docs/decisions/README.md": 80,
+    "docs/progress/README.md": 80,
+    "docs/v1_docs/README.md": 80
+  },
+  "required_headings": {
+    "AGENTS.md": [
+      "Repository Map",
+      "Project Rules",
+      "Validation"
+    ],
+    "docs/decisions/README.md": [
+      "Decision Records"
+    ],
+    "docs/progress/README.md": [
+      "Progress Records"
+    ],
+    "docs/v1_docs/README.md": [
+      "UGDR v1 Design Documents"
+    ]
+  },
+  "forbidden_headings": {
+    "AGENTS.md": [
+      "Current Status",
+      "Next Actions",
+      "Progress",
+      "Temporary Plan",
+      "当前状态",
+      "下一动作",
+      "执行进度",
+      "临时计划"
+    ]
+  },
+  "link_check_paths": [
+    "AGENTS.md",
+    "docs/architecture/repository-skeleton.md",
+    "docs/decisions",
+    "docs/progress",
+    "docs/v1_docs"
+  ],
+  "state": {
+    "path": "docs/status/current.json",
+    "schema_path": "docs/status/current.schema.json",
+    "forbidden_fields": [
+      "decisions",
+      "human_confirmed",
+      "progress",
+      "readable_summary",
+      "temporary_plan",
+      "verification_evidence"
+    ]
+  }
+}
