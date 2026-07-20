@@ -1,0 +1,4 @@
+interface:
+  display_name: "继续 UGDR 项目"
+  short_description: "从仓库状态安全推进 UGDR 项目直到下一人工门禁"
+  default_prompt: "Use $ugdr-continue-project to continue this UGDR repository safely to the next human gate."

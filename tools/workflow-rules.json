@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "states": {
+    "awaiting_review": {
+      "action": "review_design",
+      "requires_human": true,
+      "reason": "等待用户明确审阅通过，且飞书已完成审阅门禁必须满足。"
+    },
+    "ready_for_implementation": {
+      "action": "implement_and_verify",
+      "requires_human": false,
+      "reason": "按已审阅 Markdown 实现当前 scope，并运行约定验证。"
+    },
+    "awaiting_acceptance": {
+      "action": "accept_implementation",
+      "requires_human": true,
+      "reason": "等待用户最终人工验收，且飞书已实现门禁必须满足。"
+    },
+    "blocked": {
+      "action": "resolve_blockers",
+      "requires_human": true,
+      "reason": "报告 blocker 和恢复条件，不得由 Agent 自行清除。"
+    },
+    "completed": {
+      "action": "reconcile_or_advance",
+      "requires_human": true,
+      "reason": "先对账已合并 PR；仅在 master 已同步后处理 next_actions。"
+    }
+  }
+}

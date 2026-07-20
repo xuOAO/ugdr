@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "required_paths": [
+    ".agents/skills/ugdr-continue-project/SKILL.md",
+    ".agents/skills/ugdr-continue-project/agents/openai.yaml",
     ".clang-format",
     ".clang-tidy",
     "CMakeLists.txt",
@@ -17,6 +19,7 @@
     "tests/integration/__init__.py",
     "tests/integration/test_ugdr_environment.py",
     "tests/integration/test_ugdr_quality.py",
+    "tests/integration/test_ugdr_workflow.py",
     "tests/smoke",
     "AGENTS.md",
     "docs/decisions/README.md",
@@ -27,6 +30,7 @@
     "docs/v1_docs/README.md",
     "tools/check_project_docs.py",
     "tools/project_state.py",
+    "tools/workflow-rules.json",
     "tools/ugdr",
     "tools/ugdr_cli",
     "tools/ugdr_cli/__init__.py",
@@ -35,6 +39,8 @@
     "tools/ugdr_cli/result.py",
     "tools/ugdr_cli/quality.py",
     "tools/ugdr_cli/build.py",
+    "tools/ugdr_cli/workflow.py",
+    "tools/ugdr_cli/git_workflow.py",
     "tools/module-boundaries.json",
     "tools/check_module_boundaries.py",
     "docs/architecture/repository-skeleton.md"

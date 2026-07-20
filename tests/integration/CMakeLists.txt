@@ -80,3 +80,17 @@ set_tests_properties(
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
+
+add_test(
+    NAME ugdr_workflow_contract
+    COMMAND
+        ${Python3_EXECUTABLE}
+        -m
+        unittest
+        tests.integration.test_ugdr_workflow
+)
+set_tests_properties(
+    ugdr_workflow_contract
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)

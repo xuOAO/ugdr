@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -9,6 +10,12 @@ from ugdr_cli.build import run_build, run_smoke, run_test
 from ugdr_cli.environment import run_doctor
 from ugdr_cli.quality import run_format, run_lint
 from ugdr_cli.result import render_human, render_json
+from ugdr_cli.workflow import (
+    render_workflow_human,
+    run_state_core,
+    state_next,
+    state_show,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -47,7 +54,89 @@ def create_parser() -> argparse.ArgumentParser:
         command = subparsers.add_parser(name, help=help_text)
         command.add_argument("--build-dir", default="build")
         command.add_argument("--json", action="store_true", dest="json_mode")
+
+    state = subparsers.add_parser(
+        "state", help="Read, decide, and update the guarded project workflow state."
+    )
+    state_commands = state.add_subparsers(dest="state_command", required=True)
+    for name, help_text in (
+        ("show", "Validate and show the current project state."),
+        ("next", "Determine the next base action from stable workflow rules."),
+    ):
+        command = state_commands.add_parser(name, help=help_text)
+        command.add_argument("--json", action="store_true", dest="json_mode")
+
+    transition = state_commands.add_parser(
+        "transition", help="Delegate a guarded same-scope transition to project_state.py."
+    )
+    _add_transition_arguments(transition)
+
+    advance = state_commands.add_parser(
+        "advance-scope", help="Start a user-confirmed scope after a completed scope."
+    )
+    _add_transition_arguments(advance, advance_scope=True)
     return parser
+
+
+def _add_transition_arguments(parser: argparse.ArgumentParser, advance_scope=False) -> None:
+    states = (
+        "awaiting_acceptance",
+        "awaiting_review",
+        "blocked",
+        "completed",
+        "ready_for_implementation",
+    )
+    choices = tuple(value for value in states if not advance_scope or value != "completed")
+    parser.add_argument("--to", required=True, choices=choices)
+    parser.add_argument("--updated-by", required=True, choices=("human", "agent"))
+    parser.add_argument("--version", required=advance_scope)
+    parser.add_argument("--feature", required=advance_scope)
+    parser.add_argument("--step", required=advance_scope)
+    if advance_scope:
+        actions = parser.add_mutually_exclusive_group(required=True)
+        actions.add_argument("--next-actions-file")
+        actions.add_argument("--clear-next-actions", action="store_true")
+    else:
+        parser.add_argument("--next-actions-file")
+    parser.add_argument("--blocker", action="append", default=[])
+    parser.add_argument("--reviewed-doc", action="append", default=[])
+    parser.add_argument("--verification-passed", action="store_true")
+    parser.add_argument("--human-confirmed", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--json", action="store_true", dest="json_mode")
+
+
+def _state_core_arguments(args, advance_scope=False):
+    values = ["--to", args.to, "--updated-by", args.updated_by]
+    for name in ("version", "feature", "step", "next_actions_file"):
+        value = getattr(args, name, None)
+        if value is not None:
+            values.extend(["--" + name.replace("_", "-"), value])
+    for value in args.blocker:
+        values.extend(["--blocker", value])
+    for value in args.reviewed_doc:
+        values.extend(["--reviewed-doc", value])
+    for name in (
+        "verification_passed",
+        "human_confirmed",
+        "dry_run",
+        "clear_next_actions",
+    ):
+        if getattr(args, name, False):
+            values.append("--" + name.replace("_", "-"))
+    return values
+
+
+def _run_state_command(args):
+    if args.state_command == "show":
+        return state_show(REPOSITORY_ROOT)
+    if args.state_command == "next":
+        return state_next(REPOSITORY_ROOT)
+    return run_state_core(
+        REPOSITORY_ROOT,
+        args.state_command,
+        _state_core_arguments(args, args.state_command == "advance-scope"),
+    )
 
 
 def main() -> int:
@@ -57,6 +146,16 @@ def main() -> int:
         parser.print_help(sys.stderr)
         return 2
 
+    if args.command == "state":
+        payload, exit_code = _run_state_command(args)
+        rendered = (
+            json.dumps(payload, ensure_ascii=False, indent=2)
+            if args.json_mode
+            else render_workflow_human(payload)
+        )
+        sys.stdout.write(rendered)
+        sys.stdout.write("\n")
+        return exit_code
     if args.command == "doctor":
         result = run_doctor()
     elif args.command == "bootstrap":
