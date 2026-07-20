@@ -12,3 +12,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F01-S06 干净 workspace 与新 Agent 会话验收](F01_项目初始化与开发_Harness/F01-S06_干净_workspace_与新_Agent_会话验收_步骤文档.md)
 - [F02 API 契约与对象模型功能文档](F02_API_契约与对象模型/F02_API_契约与对象模型_功能文档.md)
 - [F02-S01 v1 公开 API 表面与对齐基线](F02_API_契约与对象模型/F02-S01_v1_公开_API_表面与对齐基线_步骤文档.md)
+- [F02-S02 对象模型与生命周期契约](F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md)
