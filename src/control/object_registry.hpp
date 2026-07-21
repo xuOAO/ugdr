@@ -85,6 +85,19 @@ template <typename Record, ObjectType Type> class GenerationRegistry {
         return erased;
     }
 
+    template <typename Visitor>
+    void for_each_session(OwnerSessionId owner_session, Visitor &&visitor) noexcept {
+        for (std::uint32_t index = 0; index < slots_.size(); ++index) {
+            Slot &slot = slots_[index];
+            if (!slot.retired && slot.value.has_value() && slot.owner_session == owner_session) {
+                const auto identity = encode_object_identity({Type, slot.generation, index});
+                if (identity.has_value()) {
+                    visitor(*identity, *slot.value);
+                }
+            }
+        }
+    }
+
     [[nodiscard]] std::size_t size() const noexcept {
         return live_count_;
     }

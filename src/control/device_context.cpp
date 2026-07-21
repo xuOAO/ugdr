@@ -225,6 +225,16 @@ std::size_t DeviceContextService::context_count() const noexcept {
     return contexts_.size();
 }
 
+ContextRecord *DeviceContextService::resolve_context(ipc::SessionId session_id,
+                                                     std::uint64_t identity) noexcept {
+    return contexts_.resolve(session_id, identity);
+}
+
+const ContextRecord *DeviceContextService::resolve_context(ipc::SessionId session_id,
+                                                           std::uint64_t identity) const noexcept {
+    return contexts_.resolve(session_id, identity);
+}
+
 class ControlClient::Impl {
   public:
     int call(UgdrControlRequest request, UgdrControlResponse *response) {
@@ -328,6 +338,13 @@ int ControlClient::destroy_context(std::uint64_t context_identity) {
     UgdrControlResponse response;
     const int call_status = impl_->call(make_destroy_context_request(context_identity), &response);
     return call_status != 0 ? call_status : response.status;
+}
+
+int ControlClient::call(UgdrControlRequest request, UgdrControlResponse *response) {
+    if (response == nullptr) {
+        return EINVAL;
+    }
+    return impl_->call(std::move(request), response);
 }
 
 }  // namespace ugdr::control

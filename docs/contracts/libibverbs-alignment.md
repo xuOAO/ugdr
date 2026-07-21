@@ -6,6 +6,7 @@ Sources:
 - [reviewed F02-S02 revision 17](../v1_docs/F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md)
 - [reviewed F02-S03 revision 7](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
+- [reviewed F03-S03 revision 13](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md)
 
 Status meanings:
 
@@ -49,7 +50,7 @@ Status meanings:
 | `ugdr_open_device` | `ibv_open_device` | aligned | Null plus `errno` on failure. |
 | `ugdr_close_device` | `ibv_close_device` | UGDR strict guarantee | Returns `-1` and sets `errno` on failure. UGDR deterministically reports `EBUSY` while PD or CQ children exist. |
 | `ugdr_alloc_pd`, `ugdr_dealloc_pd` | `ibv_alloc_pd`, `ibv_dealloc_pd` | aligned | Pointer failure uses `errno`; deallocate returns the errno value and reports `EBUSY` while MR or QP children exist. |
-| `ugdr_reg_mr` | `ibv_reg_mr` | aligned | Success returns a public MR containing direct `lkey` and `rkey` fields; pointer failure uses `errno`. |
+| `ugdr_reg_mr` | `ibv_reg_mr` | subset adaptation | Success returns a public MR containing direct `lkey` and `rkey` fields; pointer failure uses `errno`. v1 restricts backing memory to a valid interval inside a `cudaMalloc` device allocation and transports an opaque CUDA IPC handle to the daemon. |
 | `ugdr_dereg_mr` | `ibv_dereg_mr` | UGDR strict guarantee | Deregistration invalidates the handle. UGDR deterministically returns `EBUSY` while an accepted incomplete WR references the MR. |
 | `ugdr_create_cq` | `ibv_create_cq` | aligned | The five-argument shape is preserved; v1 callers use a null event channel and completion vector 0. |
 | `ugdr_destroy_cq` | `ibv_destroy_cq` | aligned | Returns the errno value on failure and reports `EBUSY` while any QP references the CQ. |

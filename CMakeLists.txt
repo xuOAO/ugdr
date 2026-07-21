@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_library(CUDA_DRIVER_LIBRARY NAMES cuda REQUIRED)
 
 add_library(ugdr_api STATIC
     src/api/api.cpp
@@ -24,6 +25,7 @@ target_include_directories(ugdr_api
 target_link_libraries(ugdr_api
     PRIVATE
         ugdr_control
+        ugdr_gpu
 )
 
 add_library(ugdr_ipc STATIC
@@ -41,6 +43,7 @@ add_library(ugdr_control STATIC
     src/control/device_context.cpp
     src/control/ipc_adapter.cpp
     src/control/object_identity.cpp
+    src/control/pd_mr_cq.cpp
 )
 target_include_directories(ugdr_control
     PUBLIC
@@ -64,11 +67,17 @@ target_link_libraries(ugdr_worker
 )
 
 add_library(ugdr_gpu STATIC
+    src/gpu/cuda_ipc_memory.cu
     src/gpu/gpu.cu
 )
 target_include_directories(ugdr_gpu
-    PRIVATE
+    PUBLIC
         ${PROJECT_SOURCE_DIR}/src
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+)
+target_link_libraries(ugdr_gpu
+    PRIVATE
+        ${CUDA_DRIVER_LIBRARY}
 )
 
 add_executable(ugdr_client

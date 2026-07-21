@@ -4,6 +4,7 @@ Sources:
 
 - [reviewed F02-S02 revision 17](../v1_docs/F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md)
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
+- [reviewed F03-S03 revision 13](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md)
 
 This contract fixes the Client-visible ownership, reference, handle-lifetime, and failure behavior
 for the v1 object subset. It does not prescribe daemon storage, reference-count implementation, IPC
@@ -66,10 +67,19 @@ the caller may release blockers and retry.
 | Null handle, wrong object type, stale handle, or repeated destroy | Returns `EINVAL`. `ugdr_close_device` returns `-1` and sets `errno=EINVAL`. | None |
 | QP creation receives a PD, `send_cq`, and `recv_cq` that do not belong to one Context | Returns null and sets `errno=EINVAL`. | No partial QP and no new relationship |
 | Parent or CQ still has a Client-visible dependency | Reports `EBUSY` in the corresponding function's standard return domain. | None; the original handle remains valid |
-| Resource type is not yet implemented beyond Device/Context | The corresponding PD/MR/CQ/QP public entry point reports `EOPNOTSUPP`. | No fake handle, partial object, or successful placeholder state |
+| Resource type is not yet implemented beyond PD/MR/CQ | The corresponding QP or data-path public entry point reports `EOPNOTSUPP`. | No fake handle, partial object, or successful placeholder state |
 
 The daemon may use registries, generations, reference counts, or another internal technique to meet
 these results. Those mechanisms are not Client-visible contract.
+
+## CUDA MR mapping boundary
+
+v1 MR registration accepts only a nonempty interval inside a `cudaMalloc` device allocation. The
+Client keeps its own address in `mr->addr`; the daemon opens the allocation by opaque CUDA IPC
+handle under the physical GPU selected by UUID, and records a separate daemon address. Successful
+deregistration closes that mapping before removing the PD relationship, keys, and identity. A close
+failure preserves the complete live MR so the caller can retry. Session disconnect force-reclaims
+MR mappings before PD/CQ and Context metadata.
 
 ## Queue-reference boundary
 

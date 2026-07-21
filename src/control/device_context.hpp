@@ -17,6 +17,12 @@ enum class ControlMethod : std::uint32_t {
     list_devices = 1,
     create_context = 2,
     destroy_context = 3,
+    create_pd = 4,
+    destroy_pd = 5,
+    register_mr = 6,
+    deregister_mr = 7,
+    create_cq = 8,
+    destroy_cq = 9,
 };
 
 struct DeviceDescriptor {
@@ -49,7 +55,7 @@ struct ContextRecord {
     std::size_t child_count = 0;
 };
 
-class DeviceContextService final : public ControlService {
+class DeviceContextService : public ControlService {
   public:
     DeviceContextService();
     explicit DeviceContextService(DeviceCatalog catalog);
@@ -58,6 +64,11 @@ class DeviceContextService final : public ControlService {
     void on_disconnect(ipc::SessionId session_id) noexcept override;
 
     [[nodiscard]] std::size_t context_count() const noexcept;
+
+  protected:
+    ContextRecord *resolve_context(ipc::SessionId session_id, std::uint64_t identity) noexcept;
+    const ContextRecord *resolve_context(ipc::SessionId session_id,
+                                         std::uint64_t identity) const noexcept;
 
   private:
     DeviceCatalog catalog_;
@@ -80,6 +91,7 @@ class ControlClient {
     int list_devices(std::vector<DeviceDescriptor> *devices);
     int create_context(std::uint64_t device_identity, std::uint64_t *context_identity);
     int destroy_context(std::uint64_t context_identity);
+    int call(UgdrControlRequest request, UgdrControlResponse *response);
 
   private:
     class Impl;
