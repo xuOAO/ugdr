@@ -94,11 +94,11 @@ int main() {
     }
 
     errno = 0;
-    if (ugdr_alloc_pd(sentinel_pointer<ugdr_context>(4)) != nullptr || errno != EOPNOTSUPP) {
+    if (ugdr_alloc_pd(sentinel_pointer<ugdr_context>(4)) != nullptr || errno != EINVAL) {
         return 5;
     }
     errno = 101;
-    if (ugdr_dealloc_pd(sentinel_pointer<ugdr_pd>(5)) != EOPNOTSUPP || errno != 101) {
+    if (ugdr_dealloc_pd(sentinel_pointer<ugdr_pd>(5)) != EINVAL || errno != 101) {
         return 6;
     }
 
@@ -106,22 +106,22 @@ int main() {
     errno = 0;
     if (ugdr_reg_mr(sentinel_pointer<ugdr_pd>(6), &memory, sizeof(memory),
                     UGDR_ACCESS_LOCAL_WRITE | UGDR_ACCESS_REMOTE_WRITE) != nullptr ||
-        errno != EOPNOTSUPP || memory != UINT64_C(0x1122334455667788)) {
+        errno != EINVAL || memory != UINT64_C(0x1122334455667788)) {
         return 7;
     }
     errno = 103;
-    if (ugdr_dereg_mr(sentinel_pointer<ugdr_mr>(7)) != EOPNOTSUPP || errno != 103) {
+    if (ugdr_dereg_mr(sentinel_pointer<ugdr_mr>(7)) != EINVAL || errno != 103) {
         return 8;
     }
 
     errno = 0;
     if (ugdr_create_cq(sentinel_pointer<ugdr_context>(8), 23, sentinel_pointer<void>(9), nullptr,
                        0) != nullptr ||
-        errno != EOPNOTSUPP) {
+        errno != EINVAL) {
         return 9;
     }
     errno = 107;
-    if (ugdr_destroy_cq(sentinel_pointer<ugdr_cq>(10)) != EOPNOTSUPP || errno != 107) {
+    if (ugdr_destroy_cq(sentinel_pointer<ugdr_cq>(10)) != EINVAL || errno != 107) {
         return 10;
     }
 
@@ -131,7 +131,7 @@ int main() {
     wc.imm_data = UINT32_C(0xaabbccdd);
     const ugdr_wc expected_wc = wc;
     errno = 109;
-    if (ugdr_poll_cq(sentinel_pointer<ugdr_cq>(11), 1, &wc) != -EOPNOTSUPP || errno != 109 ||
+    if (ugdr_poll_cq(sentinel_pointer<ugdr_cq>(11), 1, &wc) != -EINVAL || errno != 109 ||
         !unchanged(wc, expected_wc)) {
         return 11;
     }

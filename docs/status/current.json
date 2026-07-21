@@ -2,17 +2,17 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F03",
-  "step": "F03-S02",
+  "step": "F03-S03",
   "state": "completed",
   "next_actions": {
     "F03": [
       {
-        "step": "F03-S03",
-        "action": "PD/MR/CQ 元数据与严格生命周期"
+        "step": "F03-S04",
+        "action": "QP/SQ/RQ 所有权与 CQ 关联"
       }
     ]
   },
   "blockers": [],
-  "updated_at": "2026-07-21T15:21:50+08:00",
+  "updated_at": "2026-07-21T17:44:40+08:00",
   "updated_by": "human"
 }

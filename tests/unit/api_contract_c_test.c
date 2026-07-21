@@ -63,16 +63,15 @@ int main(void) {
         return 5;
     }
     errno = 0;
-    if (ugdr_alloc_pd(0) != 0 || errno != EOPNOTSUPP) {
+    if (ugdr_alloc_pd(0) != 0 || errno != EINVAL) {
         return 6;
     }
-    if (ugdr_dealloc_pd(0) != EOPNOTSUPP || ugdr_reg_mr(0, 0, 0, 0) != 0 || errno != EOPNOTSUPP ||
-        ugdr_dereg_mr(0) != EOPNOTSUPP) {
+    if (ugdr_dealloc_pd(0) != EINVAL || ugdr_reg_mr(0, 0, 0, 0) != 0 || errno != EINVAL ||
+        ugdr_dereg_mr(0) != EINVAL) {
         return 7;
     }
-    if (ugdr_create_cq(0, 0, 0, 0, 0) != 0 || errno != EOPNOTSUPP ||
-        ugdr_destroy_cq(0) != EOPNOTSUPP || ugdr_poll_cq(0, 1, &wc) != -EOPNOTSUPP ||
-        memcmp(&wc, &expected_wc, sizeof(wc)) != 0) {
+    if (ugdr_create_cq(0, 0, 0, 0, 0) != 0 || errno != EINVAL || ugdr_destroy_cq(0) != EINVAL ||
+        ugdr_poll_cq(0, 1, &wc) != -EINVAL || memcmp(&wc, &expected_wc, sizeof(wc)) != 0) {
         return 8;
     }
     if (ugdr_create_qp(0, &init_attr) != 0 || errno != EOPNOTSUPP ||

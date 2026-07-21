@@ -10,7 +10,9 @@ This document is the human-readable entry point for the repository skeleton. It 
 envelope, `SCM_RIGHTS` fd transfer, and synchronous client/single-threaded server types.
 `ugdr_control` depends on it only through the typed UGDR adapter; verbs resources remain outside
 F03-S01. F03-S02 adds generation-safe typed registries and Device/Context control semantics;
-`ugdr_api` uses that control boundary without depending directly on the generic IPC layer.
+F03-S03 adds PD/MR/CQ lifecycle, daemon key lookup, and UUID-routed CUDA IPC mappings. `ugdr_api`
+uses the control boundary without depending directly on the generic IPC layer and uses `ugdr_gpu`
+only for Client-side CUDA allocation export.
 
 <!-- BEGIN GENERATED: module-boundaries -->
 ## Repository areas
@@ -40,7 +42,7 @@ F03-S01. F03-S02 adds generation-safe typed registries and Device/Context contro
 | `ugdr_ipc` | `src/ipc` | 通用本机 IPC 协议、fd 传输与 client/server 封装 |
 | `ugdr_control` | `src/control` | UGDR 控制语义 adapter、类型化对象注册表与 Device/Context 服务 |
 | `ugdr_worker` | `src/worker` | 数据面 Worker 占位 |
-| `ugdr_gpu` | `src/gpu` | CUDA 执行模块占位 |
+| `ugdr_gpu` | `src/gpu` | CUDA allocation 导出、per-GPU runtime context 与 IPC mapping backend |
 | `ugdr_client` | `apps/client` | 最小 Client 可执行文件 |
 | `ugdr_daemon` | `apps/daemon` | Control、Worker 与 GPU 的组合根 |
 
@@ -48,11 +50,11 @@ F03-S01. F03-S02 adds generation-safe typed registries and Device/Context contro
 
 | Caller | Allowed dependencies |
 |---|---|
-| `ugdr_api` | `ugdr_control`, `ugdr_ipc` |
+| `ugdr_api` | `ugdr_control`, `ugdr_ipc`, `ugdr_gpu` |
 | `ugdr_ipc` | None |
 | `ugdr_control` | `ugdr_ipc` |
 | `ugdr_worker` | `ugdr_control`, `ugdr_ipc` |
 | `ugdr_gpu` | None |
-| `ugdr_client` | `ugdr_api`, `ugdr_control`, `ugdr_ipc` |
+| `ugdr_client` | `ugdr_api`, `ugdr_control`, `ugdr_ipc`, `ugdr_gpu` |
 | `ugdr_daemon` | `ugdr_control`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu` |
 <!-- END GENERATED: module-boundaries -->

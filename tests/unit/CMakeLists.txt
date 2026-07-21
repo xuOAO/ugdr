@@ -55,6 +55,18 @@ add_test(
     COMMAND ugdr_device_context_test
 )
 
+add_executable(ugdr_pd_mr_cq_test
+    pd_mr_cq_test.cpp
+)
+target_link_libraries(ugdr_pd_mr_cq_test
+    PRIVATE
+        ugdr_control
+)
+add_test(
+    NAME ugdr_pd_mr_cq
+    COMMAND ugdr_pd_mr_cq_test
+)
+
 add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )

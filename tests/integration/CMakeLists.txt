@@ -35,6 +35,40 @@ add_test(
     COMMAND ugdr_device_context_client_server_test
 )
 
+add_executable(ugdr_pd_mr_cq_client_server_test
+    pd_mr_cq_client_server_test.cpp
+)
+target_link_libraries(ugdr_pd_mr_cq_client_server_test
+    PRIVATE
+        ugdr_api
+        ugdr_control
+        ugdr_ipc
+)
+add_test(
+    NAME ugdr_pd_mr_cq_client_server
+    COMMAND ugdr_pd_mr_cq_client_server_test
+)
+
+add_executable(ugdr_cuda_ipc_mr_test
+    cuda_ipc_mr_test.cpp
+)
+target_link_libraries(ugdr_cuda_ipc_mr_test
+    PRIVATE
+        ugdr_api
+        ugdr_control
+        ugdr_gpu
+        ugdr_ipc
+)
+add_test(
+    NAME ugdr_cuda_ipc_mr
+    COMMAND ugdr_cuda_ipc_mr_test
+)
+set_tests_properties(
+    ugdr_cuda_ipc_mr
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+)
+
 add_test(
     NAME project_state_transition_matrix
     COMMAND

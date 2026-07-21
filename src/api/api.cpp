@@ -1,11 +1,14 @@
 #include "ugdr/api.hpp"
 
 #include "control/device_context.hpp"
+#include "control/pd_mr_cq.hpp"
+#include "gpu/cuda_ipc_memory.hpp"
 
 #include <cerrno>
 
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,12 +29,35 @@ struct ugdr_context {
     bool live = false;
 };
 
+struct ugdr_pd {
+    ugdr_context *context = nullptr;
+    std::uint64_t daemon_identity = 0;
+    std::uint64_t connection_epoch = 0;
+    bool live = false;
+};
+
+struct ugdr_cq {
+    ugdr_context *context = nullptr;
+    void *cq_context = nullptr;
+    std::uint64_t daemon_identity = 0;
+    std::uint64_t connection_epoch = 0;
+    int cqe = 0;
+    bool live = false;
+};
+
 namespace {
 
 struct DeviceListRecord {
     std::unique_ptr<ugdr_device *[]> pointers;
     std::vector<ugdr_device *> devices;
     bool live = true;
+};
+
+struct MrProxyRecord {
+    ugdr_mr value{};
+    std::uint64_t daemon_identity = 0;
+    std::uint64_t connection_epoch = 0;
+    bool live = false;
 };
 
 class ClientRuntime {
@@ -145,6 +171,235 @@ class ClientRuntime {
         return 0;
     }
 
+    ugdr_pd *alloc_pd(ugdr_context *context) {
+        std::lock_guard lock(mutex_);
+        if (contexts_.find(context) == contexts_.end() || !context->live) {
+            errno = EINVAL;
+            return nullptr;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            errno = connect_status;
+            return nullptr;
+        }
+        if (context->connection_epoch != client_.connection_epoch()) {
+            context->live = false;
+            errno = EINVAL;
+            return nullptr;
+        }
+        auto pd = std::make_unique<ugdr_pd>();
+        std::uint64_t identity = 0;
+        const int create_status =
+            ugdr::control::client_create_pd(client_, context->daemon_identity, &identity);
+        if (create_status != 0) {
+            errno = create_status;
+            return nullptr;
+        }
+        pd->context = context;
+        pd->daemon_identity = identity;
+        pd->connection_epoch = client_.connection_epoch();
+        pd->live = true;
+        ugdr_pd *const result = pd.get();
+        try {
+            pd_storage_.push_back(std::move(pd));
+            pds_.insert(result);
+        } catch (...) {
+            result->live = false;
+            (void)ugdr::control::client_destroy_pd(client_, identity);
+            throw;
+        }
+        return result;
+    }
+
+    int dealloc_pd(ugdr_pd *pd) {
+        std::lock_guard lock(mutex_);
+        if (pds_.find(pd) == pds_.end() || !pd->live) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        if (pd->connection_epoch != client_.connection_epoch()) {
+            pd->live = false;
+            return EINVAL;
+        }
+        const int destroy_status = ugdr::control::client_destroy_pd(client_, pd->daemon_identity);
+        if (destroy_status == 0) {
+            pd->live = false;
+        }
+        return destroy_status;
+    }
+
+    ugdr_mr *reg_mr(ugdr_pd *pd, void *address, std::size_t length, int access) {
+        std::lock_guard lock(mutex_);
+        if (pds_.find(pd) == pds_.end() || !pd->live || address == nullptr || length == 0 ||
+            access < 0 ||
+            (static_cast<std::uint32_t>(access) &
+             ~(ugdr::control::kAccessLocalWrite | ugdr::control::kAccessRemoteWrite)) != 0 ||
+            ((static_cast<std::uint32_t>(access) & ugdr::control::kAccessRemoteWrite) != 0 &&
+             (static_cast<std::uint32_t>(access) & ugdr::control::kAccessLocalWrite) == 0)) {
+            errno = EINVAL;
+            return nullptr;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            errno = connect_status;
+            return nullptr;
+        }
+        if (pd->connection_epoch != client_.connection_epoch()) {
+            pd->live = false;
+            errno = EINVAL;
+            return nullptr;
+        }
+        if (next_mr_handle_ > std::numeric_limits<std::uint32_t>::max()) {
+            errno = ENOSPC;
+            return nullptr;
+        }
+
+        ugdr::gpu::ExportedCudaMemory memory;
+        const int export_status = ugdr::gpu::export_cuda_memory(address, length, &memory);
+        if (export_status != 0) {
+            errno = export_status;
+            return nullptr;
+        }
+        auto record = std::make_unique<MrProxyRecord>();
+        std::uint64_t identity = 0;
+        ugdr::control::MrRegistrationResult accepted;
+        const int register_status = ugdr::control::client_register_mr(
+            client_, pd->daemon_identity, memory, static_cast<std::uint32_t>(access), &identity,
+            &accepted);
+        if (register_status != 0) {
+            errno = register_status;
+            return nullptr;
+        }
+
+        record->value.context = pd->context;
+        record->value.pd = pd;
+        record->value.addr = address;
+        record->value.length = length;
+        record->value.handle = static_cast<std::uint32_t>(next_mr_handle_++);
+        record->value.lkey = accepted.lkey;
+        record->value.rkey = accepted.rkey;
+        record->daemon_identity = identity;
+        record->connection_epoch = client_.connection_epoch();
+        record->live = true;
+        MrProxyRecord *const record_pointer = record.get();
+        ugdr_mr *const result = &record->value;
+        try {
+            mr_storage_.push_back(std::move(record));
+            mrs_.emplace(result, mr_storage_.back().get());
+        } catch (...) {
+            record_pointer->live = false;
+            (void)ugdr::control::client_deregister_mr(client_, identity);
+            throw;
+        }
+        return result;
+    }
+
+    int dereg_mr(ugdr_mr *mr) {
+        std::lock_guard lock(mutex_);
+        const auto found = mrs_.find(mr);
+        if (found == mrs_.end() || !found->second->live) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        MrProxyRecord *const record = found->second;
+        if (record->connection_epoch != client_.connection_epoch()) {
+            record->live = false;
+            return EINVAL;
+        }
+        const int deregister_status =
+            ugdr::control::client_deregister_mr(client_, record->daemon_identity);
+        if (deregister_status == 0) {
+            record->live = false;
+        }
+        return deregister_status;
+    }
+
+    ugdr_cq *create_cq(ugdr_context *context, int cqe, void *cq_context, ugdr_comp_channel *channel,
+                       int comp_vector) {
+        std::lock_guard lock(mutex_);
+        if (contexts_.find(context) == contexts_.end() || !context->live || cqe <= 0 ||
+            channel != nullptr || comp_vector != 0) {
+            errno = EINVAL;
+            return nullptr;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            errno = connect_status;
+            return nullptr;
+        }
+        if (context->connection_epoch != client_.connection_epoch()) {
+            context->live = false;
+            errno = EINVAL;
+            return nullptr;
+        }
+        auto cq = std::make_unique<ugdr_cq>();
+        std::uint64_t identity = 0;
+        const int create_status = ugdr::control::client_create_cq(
+            client_, context->daemon_identity, static_cast<std::uint32_t>(cqe), &identity);
+        if (create_status != 0) {
+            errno = create_status;
+            return nullptr;
+        }
+        cq->context = context;
+        cq->cq_context = cq_context;
+        cq->daemon_identity = identity;
+        cq->connection_epoch = client_.connection_epoch();
+        cq->cqe = cqe;
+        cq->live = true;
+        ugdr_cq *const result = cq.get();
+        try {
+            cq_storage_.push_back(std::move(cq));
+            cqs_.insert(result);
+        } catch (...) {
+            result->live = false;
+            (void)ugdr::control::client_destroy_cq(client_, identity);
+            throw;
+        }
+        return result;
+    }
+
+    int destroy_cq(ugdr_cq *cq) {
+        std::lock_guard lock(mutex_);
+        if (cqs_.find(cq) == cqs_.end() || !cq->live) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        if (cq->connection_epoch != client_.connection_epoch()) {
+            cq->live = false;
+            return EINVAL;
+        }
+        const int destroy_status = ugdr::control::client_destroy_cq(client_, cq->daemon_identity);
+        if (destroy_status == 0) {
+            cq->live = false;
+        }
+        return destroy_status;
+    }
+
+    int poll_cq(ugdr_cq *cq) {
+        std::lock_guard lock(mutex_);
+        if (cqs_.find(cq) == cqs_.end() || !cq->live) {
+            return -EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return -connect_status;
+        }
+        if (cq->connection_epoch != client_.connection_epoch()) {
+            cq->live = false;
+            return -EINVAL;
+        }
+        return -EOPNOTSUPP;
+    }
+
   private:
     int ensure_connected() {
         if (client_.connected()) {
@@ -162,9 +417,16 @@ class ClientRuntime {
     std::vector<std::unique_ptr<DeviceListRecord>> list_storage_;
     std::vector<std::unique_ptr<ugdr_device>> device_storage_;
     std::vector<std::unique_ptr<ugdr_context>> context_storage_;
+    std::vector<std::unique_ptr<ugdr_pd>> pd_storage_;
+    std::vector<std::unique_ptr<MrProxyRecord>> mr_storage_;
+    std::vector<std::unique_ptr<ugdr_cq>> cq_storage_;
     std::unordered_map<ugdr_device **, DeviceListRecord *> lists_;
     std::unordered_set<ugdr_device *> devices_;
     std::unordered_set<ugdr_context *> contexts_;
+    std::unordered_set<ugdr_pd *> pds_;
+    std::unordered_map<ugdr_mr *, MrProxyRecord *> mrs_;
+    std::unordered_set<ugdr_cq *> cqs_;
+    std::uint64_t next_mr_handle_ = 1;
 };
 
 ClientRuntime &runtime() {
@@ -218,32 +480,67 @@ int ugdr_close_device(ugdr_context *context) noexcept {
     }
 }
 
-ugdr_pd *ugdr_alloc_pd(ugdr_context *) noexcept {
-    return unsupported_pointer<ugdr_pd>();
+ugdr_pd *ugdr_alloc_pd(ugdr_context *context) noexcept {
+    try {
+        return runtime().alloc_pd(context);
+    } catch (...) {
+        errno = ENOMEM;
+        return nullptr;
+    }
 }
 
-int ugdr_dealloc_pd(ugdr_pd *) noexcept {
-    return kUnsupported;
+int ugdr_dealloc_pd(ugdr_pd *pd) noexcept {
+    try {
+        return runtime().dealloc_pd(pd);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
-ugdr_mr *ugdr_reg_mr(ugdr_pd *, void *, size_t, int) noexcept {
-    return unsupported_pointer<ugdr_mr>();
+ugdr_mr *ugdr_reg_mr(ugdr_pd *pd, void *address, size_t length, int access) noexcept {
+    try {
+        return runtime().reg_mr(pd, address, length, access);
+    } catch (...) {
+        errno = ENOMEM;
+        return nullptr;
+    }
 }
 
-int ugdr_dereg_mr(ugdr_mr *) noexcept {
-    return kUnsupported;
+int ugdr_dereg_mr(ugdr_mr *mr) noexcept {
+    try {
+        return runtime().dereg_mr(mr);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
-ugdr_cq *ugdr_create_cq(ugdr_context *, int, void *, ugdr_comp_channel *, int) noexcept {
-    return unsupported_pointer<ugdr_cq>();
+ugdr_cq *ugdr_create_cq(ugdr_context *context, int cqe, void *cq_context,
+                        ugdr_comp_channel *channel, int comp_vector) noexcept {
+    try {
+        return runtime().create_cq(context, cqe, cq_context, channel, comp_vector);
+    } catch (...) {
+        errno = ENOMEM;
+        return nullptr;
+    }
 }
 
-int ugdr_destroy_cq(ugdr_cq *) noexcept {
-    return kUnsupported;
+int ugdr_destroy_cq(ugdr_cq *cq) noexcept {
+    try {
+        return runtime().destroy_cq(cq);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
-int ugdr_poll_cq(ugdr_cq *, int, ugdr_wc *) noexcept {
-    return -kUnsupported;
+int ugdr_poll_cq(ugdr_cq *cq, int num_entries, ugdr_wc *wc) noexcept {
+    if (num_entries < 0 || (num_entries > 0 && wc == nullptr)) {
+        return -EINVAL;
+    }
+    try {
+        return runtime().poll_cq(cq);
+    } catch (...) {
+        return -ENOMEM;
+    }
 }
 
 ugdr_qp *ugdr_create_qp(ugdr_pd *, ugdr_qp_init_attr *) noexcept {

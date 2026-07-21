@@ -10,8 +10,12 @@
     "src/api",
     "src/ipc",
     "src/control",
+    "src/control/pd_mr_cq.hpp",
+    "src/control/pd_mr_cq.cpp",
     "src/worker",
     "src/gpu",
+    "src/gpu/cuda_ipc_memory.hpp",
+    "src/gpu/cuda_ipc_memory.cu",
     "apps/client",
     "apps/daemon",
     "tests/unit",
@@ -22,12 +26,15 @@
     "tests/unit/ipc_adapter_test.cpp",
     "tests/unit/object_registry_test.cpp",
     "tests/unit/device_context_test.cpp",
+    "tests/unit/pd_mr_cq_test.cpp",
     "tests/__init__.py",
     "tests/integration",
     "tests/integration/__init__.py",
     "tests/integration/check_client_contract_failures.py",
     "tests/integration/ipc_client_server_test.cpp",
     "tests/integration/device_context_client_server_test.cpp",
+    "tests/integration/pd_mr_cq_client_server_test.cpp",
+    "tests/integration/cuda_ipc_mr_test.cpp",
     "tests/integration/test_ugdr_environment.py",
     "tests/integration/test_ugdr_quality.py",
     "tests/integration/test_ugdr_workflow.py",
@@ -139,6 +146,10 @@
       "to": "ugdr_ipc"
     },
     {
+      "from": "ugdr_api",
+      "to": "ugdr_gpu"
+    },
+    {
       "from": "ugdr_control",
       "to": "ugdr_ipc"
     },
@@ -153,6 +164,10 @@
     {
       "from": "ugdr_client",
       "to": "ugdr_ipc"
+    },
+    {
+      "from": "ugdr_client",
+      "to": "ugdr_gpu"
     },
     {
       "from": "ugdr_worker",
@@ -198,7 +213,7 @@
     },
     "ugdr_gpu": {
       "path": "src/gpu",
-      "responsibility": "CUDA 执行模块占位"
+      "responsibility": "CUDA allocation 导出、per-GPU runtime context 与 IPC mapping backend"
     },
     "ugdr_client": {
       "path": "apps/client",
