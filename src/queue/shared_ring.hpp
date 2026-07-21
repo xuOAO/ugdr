@@ -42,13 +42,35 @@ struct alignas(kSharedRingCacheLine) SharedRingPosition {
 
 struct alignas(kSharedRingCacheLine) SharedRingHeader {
     SharedRingMetadata metadata;
-    SharedRingPosition producer;
-    SharedRingPosition consumer;
+    SharedRingPosition tail;
+    SharedRingPosition head;
 };
 
 static_assert(sizeof(SharedRingMetadata) == kSharedRingCacheLine);
 static_assert(sizeof(SharedRingPosition) == kSharedRingCacheLine);
 static_assert(sizeof(SharedRingHeader) == 3 * kSharedRingCacheLine);
+
+struct MutableSlotSpan {
+    void *data = nullptr;
+    std::uint32_t count = 0;
+};
+
+struct ConstSlotSpan {
+    const void *data = nullptr;
+    std::uint32_t count = 0;
+};
+
+struct MutableSlotBatch {
+    MutableSlotSpan first;
+    MutableSlotSpan second;
+    std::uint32_t count = 0;
+};
+
+struct ConstSlotBatch {
+    ConstSlotSpan first;
+    ConstSlotSpan second;
+    std::uint32_t count = 0;
+};
 
 class SharedRing {
   public:
@@ -67,6 +89,11 @@ class SharedRing {
     [[nodiscard]] const void *mapping_address() const noexcept;
     int duplicate_fd(int *descriptor) const noexcept;
 
+    int producer_reserve(std::uint32_t max_count, MutableSlotBatch *batch) noexcept;
+    int producer_publish(std::uint32_t count) noexcept;
+    int consumer_peek(std::uint32_t max_count, ConstSlotBatch *batch) noexcept;
+    int consumer_release(std::uint32_t count) noexcept;
+
     int producer_reserve(void **slot) noexcept;
     int producer_publish() noexcept;
     int consumer_peek(const void **slot) noexcept;
@@ -80,14 +107,30 @@ class SharedRing {
                QueueDescriptor queue_descriptor) noexcept;
     [[nodiscard]] SharedRingHeader *header() noexcept;
     [[nodiscard]] const SharedRingHeader *header() const noexcept;
-    [[nodiscard]] void *slot(std::uint64_t position) noexcept;
+    [[nodiscard]] void *slot_at(std::uint32_t index) noexcept;
+
+    struct alignas(kSharedRingCacheLine) ProducerState {
+        std::uint64_t local_tail = 0;
+        std::uint64_t cached_head = 0;
+        std::uint32_t local_index = 0;
+        std::uint32_t reserved = 0;
+        bool initialized = false;
+    };
+
+    struct alignas(kSharedRingCacheLine) ConsumerState {
+        std::uint64_t local_head = 0;
+        std::uint64_t cached_tail = 0;
+        std::uint32_t local_index = 0;
+        std::uint32_t peeked = 0;
+        bool initialized = false;
+    };
 
     void *mapping_ = nullptr;
     std::size_t mapping_size_ = 0;
     int descriptor_ = -1;
     QueueDescriptor queue_descriptor_{};
-    bool producer_reserved_ = false;
-    bool consumer_peeked_ = false;
+    ProducerState producer_;
+    ConsumerState consumer_;
 };
 
 int shared_ring_mapping_size(const QueueDescriptor &descriptor, std::size_t page_size,

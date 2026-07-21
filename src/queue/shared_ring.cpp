@@ -1,5 +1,6 @@
 #include "queue/shared_ring.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <climits>
@@ -53,12 +54,12 @@ bool reserved_is_zero(const SharedRingHeader &header) noexcept {
             return false;
         }
     }
-    for (std::uint64_t value : header.producer.reserved) {
+    for (std::uint64_t value : header.tail.reserved) {
         if (value != 0) {
             return false;
         }
     }
-    for (std::uint64_t value : header.consumer.reserved) {
+    for (std::uint64_t value : header.head.reserved) {
         if (value != 0) {
             return false;
         }
@@ -89,8 +90,10 @@ SharedRing &SharedRing::operator=(SharedRing &&other) noexcept {
         mapping_size_ = std::exchange(other.mapping_size_, 0);
         descriptor_ = std::exchange(other.descriptor_, -1);
         queue_descriptor_ = other.queue_descriptor_;
-        producer_reserved_ = std::exchange(other.producer_reserved_, false);
-        consumer_peeked_ = std::exchange(other.consumer_peeked_, false);
+        producer_ = other.producer_;
+        consumer_ = other.consumer_;
+        other.producer_ = {};
+        other.consumer_ = {};
     }
     return *this;
 }
@@ -106,8 +109,8 @@ void SharedRing::reset() noexcept {
     mapping_size_ = 0;
     descriptor_ = -1;
     queue_descriptor_ = {};
-    producer_reserved_ = false;
-    consumer_peeked_ = false;
+    producer_ = {};
+    consumer_ = {};
 }
 
 bool SharedRing::valid() const noexcept {
@@ -146,62 +149,156 @@ const SharedRingHeader *SharedRing::header() const noexcept {
     return static_cast<const SharedRingHeader *>(mapping_);
 }
 
-void *SharedRing::slot(std::uint64_t position) noexcept {
+void *SharedRing::slot_at(std::uint32_t index) noexcept {
     auto *bytes = static_cast<std::byte *>(mapping_);
     return bytes + sizeof(SharedRingHeader) +
-           (position % queue_descriptor_.capacity) * queue_descriptor_.slot_stride;
+           static_cast<std::size_t>(index) * queue_descriptor_.slot_stride;
+}
+
+int SharedRing::producer_reserve(std::uint32_t max_count, MutableSlotBatch *batch) noexcept {
+    if (!valid() || max_count == 0 || batch == nullptr || producer_.reserved != 0) {
+        return EINVAL;
+    }
+    std::atomic_ref<std::uint64_t> shared_tail(header()->tail.value);
+    std::atomic_ref<std::uint64_t> shared_head(header()->head.value);
+    if (!producer_.initialized) {
+        producer_.local_tail = shared_tail.load(std::memory_order_relaxed);
+        producer_.cached_head = shared_head.load(std::memory_order_acquire);
+        producer_.local_index =
+            static_cast<std::uint32_t>(producer_.local_tail % queue_descriptor_.capacity);
+        producer_.initialized = true;
+    }
+    std::uint64_t used = producer_.local_tail - producer_.cached_head;
+    if (used > queue_descriptor_.capacity) {
+        return EPROTO;
+    }
+    std::uint64_t available = queue_descriptor_.capacity - used;
+    if (available < max_count) {
+        producer_.cached_head = shared_head.load(std::memory_order_acquire);
+        used = producer_.local_tail - producer_.cached_head;
+        if (used > queue_descriptor_.capacity) {
+            return EPROTO;
+        }
+        available = queue_descriptor_.capacity - used;
+    }
+    if (available == 0) {
+        return EAGAIN;
+    }
+    const auto count = static_cast<std::uint32_t>(std::min<std::uint64_t>(max_count, available));
+    const auto start = producer_.local_index;
+    const auto first_count = std::min(count, queue_descriptor_.capacity - start);
+    MutableSlotBatch reserved;
+    reserved.first = {slot_at(start), first_count};
+    reserved.second = {first_count == count ? nullptr : slot_at(0), count - first_count};
+    reserved.count = count;
+    producer_.reserved = count;
+    *batch = reserved;
+    return 0;
+}
+
+int SharedRing::producer_publish(std::uint32_t count) noexcept {
+    if (!valid() || producer_.reserved == 0 || count > producer_.reserved) {
+        return EINVAL;
+    }
+    if (count != 0) {
+        producer_.local_tail += count;
+        producer_.local_index += count;
+        if (producer_.local_index >= queue_descriptor_.capacity) {
+            producer_.local_index -= queue_descriptor_.capacity;
+        }
+        std::atomic_ref<std::uint64_t> shared_tail(header()->tail.value);
+        shared_tail.store(producer_.local_tail, std::memory_order_release);
+    }
+    producer_.reserved = 0;
+    return 0;
+}
+
+int SharedRing::consumer_peek(std::uint32_t max_count, ConstSlotBatch *batch) noexcept {
+    if (!valid() || max_count == 0 || batch == nullptr || consumer_.peeked != 0) {
+        return EINVAL;
+    }
+    std::atomic_ref<std::uint64_t> shared_tail(header()->tail.value);
+    std::atomic_ref<std::uint64_t> shared_head(header()->head.value);
+    if (!consumer_.initialized) {
+        consumer_.local_head = shared_head.load(std::memory_order_relaxed);
+        consumer_.cached_tail = shared_tail.load(std::memory_order_acquire);
+        consumer_.local_index =
+            static_cast<std::uint32_t>(consumer_.local_head % queue_descriptor_.capacity);
+        consumer_.initialized = true;
+    }
+    std::uint64_t available = consumer_.cached_tail - consumer_.local_head;
+    if (available > queue_descriptor_.capacity) {
+        return EPROTO;
+    }
+    if (available < max_count) {
+        consumer_.cached_tail = shared_tail.load(std::memory_order_acquire);
+        available = consumer_.cached_tail - consumer_.local_head;
+        if (available > queue_descriptor_.capacity) {
+            return EPROTO;
+        }
+    }
+    if (available == 0) {
+        return EAGAIN;
+    }
+    const auto count = static_cast<std::uint32_t>(std::min<std::uint64_t>(max_count, available));
+    const auto start = consumer_.local_index;
+    const auto first_count = std::min(count, queue_descriptor_.capacity - start);
+    ConstSlotBatch visible;
+    visible.first = {slot_at(start), first_count};
+    visible.second = {first_count == count ? nullptr : slot_at(0), count - first_count};
+    visible.count = count;
+    consumer_.peeked = count;
+    *batch = visible;
+    return 0;
+}
+
+int SharedRing::consumer_release(std::uint32_t count) noexcept {
+    if (!valid() || consumer_.peeked == 0 || count > consumer_.peeked) {
+        return EINVAL;
+    }
+    if (count != 0) {
+        consumer_.local_head += count;
+        consumer_.local_index += count;
+        if (consumer_.local_index >= queue_descriptor_.capacity) {
+            consumer_.local_index -= queue_descriptor_.capacity;
+        }
+        std::atomic_ref<std::uint64_t> shared_head(header()->head.value);
+        shared_head.store(consumer_.local_head, std::memory_order_release);
+    }
+    consumer_.peeked = 0;
+    return 0;
 }
 
 int SharedRing::producer_reserve(void **slot_pointer) noexcept {
-    if (!valid() || slot_pointer == nullptr || producer_reserved_) {
+    if (slot_pointer == nullptr) {
         return EINVAL;
     }
-    std::atomic_ref<std::uint64_t> producer(header()->producer.value);
-    std::atomic_ref<std::uint64_t> consumer(header()->consumer.value);
-    const std::uint64_t produced = producer.load(std::memory_order_relaxed);
-    const std::uint64_t consumed = consumer.load(std::memory_order_acquire);
-    if (produced - consumed >= queue_descriptor_.capacity) {
-        return EAGAIN;
+    MutableSlotBatch batch;
+    const int status = producer_reserve(1, &batch);
+    if (status == 0) {
+        *slot_pointer = batch.first.data;
     }
-    *slot_pointer = slot(produced);
-    producer_reserved_ = true;
-    return 0;
+    return status;
 }
 
 int SharedRing::producer_publish() noexcept {
-    if (!valid() || !producer_reserved_) {
-        return EINVAL;
-    }
-    std::atomic_ref<std::uint64_t> producer(header()->producer.value);
-    producer.fetch_add(1, std::memory_order_release);
-    producer_reserved_ = false;
-    return 0;
+    return producer_publish(1);
 }
 
 int SharedRing::consumer_peek(const void **slot_pointer) noexcept {
-    if (!valid() || slot_pointer == nullptr || consumer_peeked_) {
+    if (slot_pointer == nullptr) {
         return EINVAL;
     }
-    std::atomic_ref<std::uint64_t> producer(header()->producer.value);
-    std::atomic_ref<std::uint64_t> consumer(header()->consumer.value);
-    const std::uint64_t consumed = consumer.load(std::memory_order_relaxed);
-    const std::uint64_t produced = producer.load(std::memory_order_acquire);
-    if (produced == consumed) {
-        return EAGAIN;
+    ConstSlotBatch batch;
+    const int status = consumer_peek(1, &batch);
+    if (status == 0) {
+        *slot_pointer = batch.first.data;
     }
-    *slot_pointer = slot(consumed);
-    consumer_peeked_ = true;
-    return 0;
+    return status;
 }
 
 int SharedRing::consumer_release() noexcept {
-    if (!valid() || !consumer_peeked_) {
-        return EINVAL;
-    }
-    std::atomic_ref<std::uint64_t> consumer(header()->consumer.value);
-    consumer.fetch_add(1, std::memory_order_release);
-    consumer_peeked_ = false;
-    return 0;
+    return consumer_release(1);
 }
 
 int shared_ring_mapping_size(const QueueDescriptor &descriptor, std::size_t page_size,

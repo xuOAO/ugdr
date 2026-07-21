@@ -32,6 +32,7 @@
     "tests/unit/device_context_test.cpp",
     "tests/unit/pd_mr_cq_test.cpp",
     "tests/unit/shared_ring_test.cpp",
+    "tests/unit/shared_ring_benchmark.cpp",
     "tests/__init__.py",
     "tests/integration",
     "tests/integration/__init__.py",
