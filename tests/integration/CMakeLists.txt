@@ -39,6 +39,31 @@ add_test(
 )
 
 add_test(
+    NAME client_contracts_current_repository
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tools/check_client_contracts.py
+        --root ${PROJECT_SOURCE_DIR}
+)
+
+add_test(
+    NAME client_contracts_reject_invalid_fixtures
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_client_contract_failures.py
+        --python ${Python3_EXECUTABLE}
+        --checker ${PROJECT_SOURCE_DIR}/tools/check_client_contracts.py
+        --repository ${PROJECT_SOURCE_DIR}
+)
+
+set_tests_properties(
+    client_contracts_current_repository
+    client_contracts_reject_invalid_fixtures
+    PROPERTIES
+        LABELS "ugdr_contract"
+)
+
+add_test(
     NAME project_handoff_surface
     COMMAND
         ${Python3_EXECUTABLE}

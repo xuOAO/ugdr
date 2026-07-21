@@ -163,6 +163,7 @@ class QualityCommandContractTests(unittest.TestCase):
                 "lint.format",
                 "lint.clang_tidy",
                 "lint.module_boundaries",
+                "lint.client_contracts",
                 "lint.project_docs",
                 "lint.skeleton",
                 "lint.project_state",
@@ -181,6 +182,9 @@ class QualityCommandContractTests(unittest.TestCase):
                 part.endswith("check_module_boundaries.py") for part in argv
             )
             and "--build-dir" in argv,
+            "lint.client_contracts": lambda argv: any(
+                part.endswith("check_client_contracts.py") for part in argv
+            ),
             "lint.project_docs": lambda argv: any(
                 part.endswith("check_project_docs.py") for part in argv
             ),
