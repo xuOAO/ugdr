@@ -5,6 +5,11 @@
       "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
       "revision": 65,
       "body_sha256": "edbd40c76daf5874174113ca6668313382b13b36f82830b6d03e9f400433c9d0"
+    },
+    {
+      "path": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
+      "revision": 21,
+      "body_sha256": "70b82f1700642152e5f03ea3be3b047aab5c7d976c3511a4a58e710c6aade09f"
     }
   ],
   "routes": [
@@ -83,6 +88,76 @@
       "feature": "F03",
       "step": "F03-S06",
       "source": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "next_actions": {
+        "F04": [
+          {
+            "step": "F04-S01",
+            "action": "共享队列与映射边界"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F04",
+      "step": "F04-S01",
+      "source": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
+      "next_actions": {
+        "F04": [
+          {
+            "step": "F04-S02",
+            "action": "SQ/RQ posting 快路径"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F04",
+      "step": "F04-S02",
+      "source": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
+      "next_actions": {
+        "F04": [
+          {
+            "step": "F04-S03",
+            "action": "CQ 生产与 polling 快路径"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F04",
+      "step": "F04-S03",
+      "source": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
+      "next_actions": {
+        "F04": [
+          {
+            "step": "F04-S04",
+            "action": "Mock Worker 与 completion"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F04",
+      "step": "F04-S04",
+      "source": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
+      "next_actions": {
+        "F04": [
+          {
+            "step": "F04-S05",
+            "action": "公开 API 集成与性能观测"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F04",
+      "step": "F04-S05",
+      "source": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
       "next_actions": {}
     }
   ]
