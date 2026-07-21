@@ -7,6 +7,30 @@ add_test(
         --build-dir ${PROJECT_BINARY_DIR}
 )
 
+add_executable(ugdr_ipc_protocol_test
+    ipc_protocol_test.cpp
+)
+target_link_libraries(ugdr_ipc_protocol_test
+    PRIVATE
+        ugdr_ipc
+)
+add_test(
+    NAME ugdr_ipc_protocol
+    COMMAND ugdr_ipc_protocol_test
+)
+
+add_executable(ugdr_ipc_adapter_test
+    ipc_adapter_test.cpp
+)
+target_link_libraries(ugdr_ipc_adapter_test
+    PRIVATE
+        ugdr_control
+)
+add_test(
+    NAME ugdr_ipc_adapter
+    COMMAND ugdr_ipc_adapter_test
+)
+
 add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )

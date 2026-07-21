@@ -9,6 +9,18 @@ add_test(
         --build-dir ${PROJECT_BINARY_DIR}/tests/forbidden_dependency
 )
 
+add_executable(ugdr_ipc_client_server_test
+    ipc_client_server_test.cpp
+)
+target_link_libraries(ugdr_ipc_client_server_test
+    PRIVATE
+        ugdr_ipc
+)
+add_test(
+    NAME ugdr_ipc_client_server
+    COMMAND ugdr_ipc_client_server_test
+)
+
 add_test(
     NAME project_state_transition_matrix
     COMMAND

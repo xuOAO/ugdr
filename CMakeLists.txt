@@ -20,12 +20,27 @@ target_include_directories(ugdr_api
         ${PROJECT_SOURCE_DIR}/include
 )
 
+add_library(ugdr_ipc STATIC
+    src/ipc/protocol.cpp
+    src/ipc/client.cpp
+    src/ipc/server.cpp
+)
+target_include_directories(ugdr_ipc
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/src
+)
+
 add_library(ugdr_control STATIC
     src/control/control.cpp
+    src/control/ipc_adapter.cpp
 )
 target_include_directories(ugdr_control
-    PRIVATE
+    PUBLIC
         ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_control
+    PRIVATE
+        ugdr_ipc
 )
 
 add_library(ugdr_worker STATIC
@@ -65,6 +80,7 @@ target_include_directories(ugdr_daemon
 )
 target_link_libraries(ugdr_daemon
     PRIVATE
+        ugdr_ipc
         ugdr_control
         ugdr_worker
         ugdr_gpu
