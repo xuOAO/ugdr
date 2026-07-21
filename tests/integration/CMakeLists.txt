@@ -63,6 +63,23 @@ add_test(
     COMMAND ugdr_qp_client_server_test
 )
 
+add_executable(ugdr_control_plane_acceptance_test
+    control_plane_acceptance_test.cpp
+)
+target_link_libraries(ugdr_control_plane_acceptance_test
+    PRIVATE
+        ugdr_api
+)
+add_test(
+    NAME ugdr_control_plane_acceptance
+    COMMAND ugdr_control_plane_acceptance_test $<TARGET_FILE:ugdr_daemon>
+)
+set_tests_properties(
+    ugdr_control_plane_acceptance
+    PROPERTIES
+        TIMEOUT 30
+)
+
 add_executable(ugdr_cuda_ipc_mr_test
     cuda_ipc_mr_test.cpp
 )
