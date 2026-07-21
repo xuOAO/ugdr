@@ -3,6 +3,7 @@
 #include "control/device_context.hpp"
 #include "control/object_registry.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
+#include "queue/shared_ring.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -67,6 +68,7 @@ struct CqRecord {
     std::uint64_t context_identity = 0;
     std::uint32_t cqe = 0;
     std::size_t qp_references = 0;
+    queue::SharedRing completions;
 };
 
 class PdMrCqService : public DeviceContextService {
@@ -125,6 +127,8 @@ int client_register_mr(ControlClient &client, std::uint64_t pd_identity,
                        const gpu::ExportedCudaMemory &memory, std::uint32_t access,
                        std::uint64_t *mr_identity, MrRegistrationResult *result);
 int client_deregister_mr(ControlClient &client, std::uint64_t mr_identity);
+int client_create_cq(ControlClient &client, std::uint64_t context_identity, std::uint32_t cqe,
+                     std::uint64_t *cq_identity, queue::SharedRing *completions);
 int client_create_cq(ControlClient &client, std::uint64_t context_identity, std::uint32_t cqe,
                      std::uint64_t *cq_identity);
 int client_destroy_cq(ControlClient &client, std::uint64_t cq_identity);

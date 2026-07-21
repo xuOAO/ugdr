@@ -14,6 +14,10 @@ F03-S03 adds PD/MR/CQ lifecycle, daemon key lookup, and UUID-routed CUDA IPC map
 uses the control boundary without depending directly on the generic IPC layer and uses `ugdr_gpu`
 only for Client-side CUDA allocation export.
 
+F04-S01 adds `ugdr_queue` as the shared data-plane layout boundary. It owns versioned SPSC ring
+memory, descriptor slots, and mapping validation; `ugdr_control` only creates and transfers those
+mappings, while public post and poll operations remain outside this step.
+
 <!-- BEGIN GENERATED: module-boundaries -->
 ## Repository areas
 
@@ -40,6 +44,7 @@ only for Client-side CUDA allocation export.
 |---|---|---|
 | `ugdr_api` | `src/api` | Client 可见 API、Device/Context proxy 与进程级控制连接 |
 | `ugdr_ipc` | `src/ipc` | 通用本机 IPC 协议、fd 传输与 client/server 封装 |
+| `ugdr_queue` | `src/queue` | 版本化共享 ring 布局、直接 descriptor slot 与跨进程 mapping 原语 |
 | `ugdr_control` | `src/control` | UGDR 控制语义 adapter、类型化对象注册表与 Device/Context 服务 |
 | `ugdr_worker` | `src/worker` | 数据面 Worker 占位 |
 | `ugdr_gpu` | `src/gpu` | CUDA allocation 导出、per-GPU runtime context 与 IPC mapping backend |
@@ -50,11 +55,12 @@ only for Client-side CUDA allocation export.
 
 | Caller | Allowed dependencies |
 |---|---|
-| `ugdr_api` | `ugdr_control`, `ugdr_ipc`, `ugdr_gpu` |
+| `ugdr_api` | `ugdr_control`, `ugdr_ipc`, `ugdr_gpu`, `ugdr_queue` |
 | `ugdr_ipc` | None |
-| `ugdr_control` | `ugdr_ipc` |
-| `ugdr_worker` | `ugdr_control`, `ugdr_ipc` |
+| `ugdr_queue` | None |
+| `ugdr_control` | `ugdr_ipc`, `ugdr_queue` |
+| `ugdr_worker` | `ugdr_control`, `ugdr_ipc`, `ugdr_queue` |
 | `ugdr_gpu` | None |
-| `ugdr_client` | `ugdr_api`, `ugdr_control`, `ugdr_ipc`, `ugdr_gpu` |
-| `ugdr_daemon` | `ugdr_control`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu` |
+| `ugdr_client` | `ugdr_api`, `ugdr_control`, `ugdr_ipc`, `ugdr_gpu`, `ugdr_queue` |
+| `ugdr_daemon` | `ugdr_control`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu`, `ugdr_queue` |
 <!-- END GENERATED: module-boundaries -->

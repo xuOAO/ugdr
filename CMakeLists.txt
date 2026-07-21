@@ -11,7 +11,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Threads REQUIRED)
 find_library(CUDA_DRIVER_LIBRARY NAMES cuda REQUIRED)
+
+add_library(ugdr_queue STATIC
+    src/queue/shared_ring.cpp
+)
+target_include_directories(ugdr_queue
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/src
+)
 
 add_library(ugdr_api STATIC
     src/api/api.cpp
@@ -26,6 +35,7 @@ target_link_libraries(ugdr_api
     PRIVATE
         ugdr_control
         ugdr_gpu
+        ugdr_queue
 )
 
 add_library(ugdr_ipc STATIC
@@ -53,6 +63,7 @@ target_include_directories(ugdr_control
 target_link_libraries(ugdr_control
     PRIVATE
         ugdr_ipc
+        ugdr_queue
 )
 
 add_library(ugdr_worker STATIC
@@ -65,6 +76,7 @@ target_include_directories(ugdr_worker
 target_link_libraries(ugdr_worker
     PRIVATE
         ugdr_control
+        ugdr_queue
 )
 
 add_library(ugdr_gpu STATIC

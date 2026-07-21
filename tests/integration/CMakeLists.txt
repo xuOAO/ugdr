@@ -21,6 +21,20 @@ add_test(
     COMMAND ugdr_ipc_client_server_test
 )
 
+add_executable(ugdr_shared_queue_mapping_test
+    shared_queue_mapping_test.cpp
+)
+target_link_libraries(ugdr_shared_queue_mapping_test
+    PRIVATE
+        Threads::Threads
+        ugdr_ipc
+        ugdr_queue
+)
+add_test(
+    NAME ugdr_shared_queue_mapping
+    COMMAND ugdr_shared_queue_mapping_test
+)
+
 add_executable(ugdr_device_context_client_server_test
     device_context_client_server_test.cpp
 )

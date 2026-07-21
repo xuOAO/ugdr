@@ -90,6 +90,8 @@ struct QpRecord {
     std::uint8_t retry_count = 0;
     std::uint8_t rnr_retry = 0;
     std::uint8_t min_rnr_timer = 0;
+    queue::SharedRing send_queue;
+    queue::SharedRing receive_queue;
 };
 
 bool valid_qp_create_attributes(const QpCreateAttributes &attributes) noexcept;
@@ -135,6 +137,9 @@ class QpService final : public PdMrCqService {
     std::uint32_t next_qp_num_ = 1;
 };
 
+int client_create_qp(ControlClient &client, std::uint64_t pd_identity,
+                     const QpCreateAttributes &attributes, std::uint64_t *qp_identity,
+                     queue::SharedRing *send_queue, queue::SharedRing *receive_queue);
 int client_create_qp(ControlClient &client, std::uint64_t pd_identity,
                      const QpCreateAttributes &attributes, std::uint64_t *qp_identity);
 int client_destroy_qp(ControlClient &client, std::uint64_t qp_identity);
