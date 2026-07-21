@@ -17,6 +17,10 @@ RC QP source:
 
 - [F02-S03 RC QP 建连与状态机契约](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md), Feishu revision 7.
 
+WR/WC source:
+
+- [F02-S04 WR/WC 与完成语义契约](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md), Feishu revision 20.
+
 Current contracts:
 
 - [Public API](public-api.md): v1 symbol surface and placeholder failure rules.
@@ -26,7 +30,8 @@ Current contracts:
   and handle failure semantics.
 - [RC QP state machine](rc-qp-state-machine.md): public QP records, connection identity, legal
   transitions, error results, and atomic same-daemon connect.
+- [WR/WC and completion semantics](wr-wc-semantics.md): MR keys, public WR/WC records, posting,
+  Write/Immediate behavior, retry, completion, ordering, flush, and lifetime rules.
 
-Future reviewed F02 steps add WR/WC semantics here.
 No file in this directory may define IPC encoding, internal WQE/CQE layout, worker scheduling, or
 GPU metadata.

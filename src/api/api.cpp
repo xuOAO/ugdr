@@ -80,7 +80,7 @@ int ugdr_query_qp_conn_info(ugdr_qp *, ugdr_qp_conn_info *) noexcept {
     return kUnsupported;
 }
 
-int ugdr_connect_qp(ugdr_qp *, const ugdr_qp_conn_info *) noexcept {
+int ugdr_connect_qp(ugdr_qp *, const ugdr_qp_conn_info *, const ugdr_qp_attr *, int) noexcept {
     return kUnsupported;
 }
 

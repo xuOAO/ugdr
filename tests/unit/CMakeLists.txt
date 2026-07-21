@@ -9,6 +9,7 @@ add_test(
 
 add_executable(ugdr_api_contract
     api_contract_test.cpp
+    api_contract_c_test.c
 )
 target_link_libraries(ugdr_api_contract
     PRIVATE
