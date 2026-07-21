@@ -49,7 +49,9 @@ int child_main(const std::string &socket_path, int ready_fd) {
     CountingService service;
     ugdr::control::ControlIpcHandler handler(service);
     ugdr::ipc::IpcServer server(handler);
-    if (server.start(socket_path) != 0) {
+    const int start_status = server.start(socket_path);
+    if (start_status != 0) {
+        dprintf(STDERR_FILENO, "server start failed: %d\n", start_status);
         return 20;
     }
     const char ready = 'r';

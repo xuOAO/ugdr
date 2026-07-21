@@ -98,6 +98,7 @@ class ControlClient {
     int create_context(std::uint64_t device_identity, std::uint64_t *context_identity);
     int destroy_context(std::uint64_t context_identity);
     int call(UgdrControlRequest request, UgdrControlResponse *response);
+    int call(UgdrControlRequest request, DecodedControlResponse *response);
 
   private:
     class Impl;

@@ -237,7 +237,7 @@ const ContextRecord *DeviceContextService::resolve_context(ipc::SessionId sessio
 
 class ControlClient::Impl {
   public:
-    int call(UgdrControlRequest request, UgdrControlResponse *response) {
+    int call(UgdrControlRequest request, DecodedControlResponse *response) {
         ipc::IpcMessage encoded;
         const int encode_status = encode_request(request, {}, &encoded);
         if (encode_status != 0) {
@@ -257,6 +257,20 @@ class ControlClient::Impl {
             return -decode_status;
         }
         if (decoded.value.method != request.method || decoded.value.status < 0) {
+            client.close();
+            return EPROTO;
+        }
+        *response = std::move(decoded);
+        return 0;
+    }
+
+    int call(UgdrControlRequest request, UgdrControlResponse *response) {
+        DecodedControlResponse decoded;
+        const int status = call(std::move(request), &decoded);
+        if (status != 0) {
+            return status;
+        }
+        if (!decoded.file_descriptors.empty()) {
             client.close();
             return EPROTO;
         }
@@ -341,6 +355,13 @@ int ControlClient::destroy_context(std::uint64_t context_identity) {
 }
 
 int ControlClient::call(UgdrControlRequest request, UgdrControlResponse *response) {
+    if (response == nullptr) {
+        return EINVAL;
+    }
+    return impl_->call(std::move(request), response);
+}
+
+int ControlClient::call(UgdrControlRequest request, DecodedControlResponse *response) {
     if (response == nullptr) {
         return EINVAL;
     }

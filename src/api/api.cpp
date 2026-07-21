@@ -4,6 +4,7 @@
 #include "control/pd_mr_cq.hpp"
 #include "control/qp.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
+#include "queue/shared_ring.hpp"
 
 #include <cerrno>
 
@@ -44,6 +45,7 @@ struct ugdr_cq {
     std::uint64_t connection_epoch = 0;
     int cqe = 0;
     bool live = false;
+    ugdr::queue::SharedRing completions;
 };
 
 struct ugdr_qp {
@@ -52,6 +54,8 @@ struct ugdr_qp {
     std::uint64_t daemon_identity = 0;
     std::uint64_t connection_epoch = 0;
     bool live = false;
+    ugdr::queue::SharedRing send_queue;
+    ugdr::queue::SharedRing receive_queue;
 };
 
 namespace {
@@ -349,8 +353,9 @@ class ClientRuntime {
         }
         auto cq = std::make_unique<ugdr_cq>();
         std::uint64_t identity = 0;
-        const int create_status = ugdr::control::client_create_cq(
-            client_, context->daemon_identity, static_cast<std::uint32_t>(cqe), &identity);
+        const int create_status = ugdr::control::client_create_cq(client_, context->daemon_identity,
+                                                                  static_cast<std::uint32_t>(cqe),
+                                                                  &identity, &cq->completions);
         if (create_status != 0) {
             errno = create_status;
             return nullptr;
@@ -384,11 +389,13 @@ class ClientRuntime {
         }
         if (cq->connection_epoch != client_.connection_epoch()) {
             cq->live = false;
+            cq->completions.reset();
             return EINVAL;
         }
         const int destroy_status = ugdr::control::client_destroy_cq(client_, cq->daemon_identity);
         if (destroy_status == 0) {
             cq->live = false;
+            cq->completions.reset();
         }
         return destroy_status;
     }
@@ -404,6 +411,7 @@ class ClientRuntime {
         }
         if (cq->connection_epoch != client_.connection_epoch()) {
             cq->live = false;
+            cq->completions.reset();
             return -EINVAL;
         }
         return -EOPNOTSUPP;
@@ -450,7 +458,8 @@ class ClientRuntime {
         auto qp = std::make_unique<ugdr_qp>();
         std::uint64_t identity = 0;
         const int create_status =
-            ugdr::control::client_create_qp(client_, pd->daemon_identity, attributes, &identity);
+            ugdr::control::client_create_qp(client_, pd->daemon_identity, attributes, &identity,
+                                            &qp->send_queue, &qp->receive_queue);
         if (create_status != 0) {
             errno = create_status;
             return nullptr;
@@ -483,11 +492,15 @@ class ClientRuntime {
         }
         if (qp->connection_epoch != client_.connection_epoch()) {
             qp->live = false;
+            qp->send_queue.reset();
+            qp->receive_queue.reset();
             return EINVAL;
         }
         const int destroy_status = ugdr::control::client_destroy_qp(client_, qp->daemon_identity);
         if (destroy_status == 0) {
             qp->live = false;
+            qp->send_queue.reset();
+            qp->receive_queue.reset();
         }
         return destroy_status;
     }
@@ -503,6 +516,8 @@ class ClientRuntime {
         }
         if (qp->connection_epoch != client_.connection_epoch()) {
             qp->live = false;
+            qp->send_queue.reset();
+            qp->receive_queue.reset();
             return EINVAL;
         }
         ugdr::control::QpAttributes attributes;
@@ -529,6 +544,8 @@ class ClientRuntime {
         }
         if (qp->connection_epoch != client_.connection_epoch()) {
             qp->live = false;
+            qp->send_queue.reset();
+            qp->receive_queue.reset();
             return EINVAL;
         }
         ugdr::control::QpSnapshot snapshot;
@@ -583,6 +600,8 @@ class ClientRuntime {
         }
         if (qp->connection_epoch != client_.connection_epoch()) {
             qp->live = false;
+            qp->send_queue.reset();
+            qp->receive_queue.reset();
             return EINVAL;
         }
         std::uint32_t qp_num = 0;
@@ -607,6 +626,8 @@ class ClientRuntime {
         }
         if (qp->connection_epoch != client_.connection_epoch()) {
             qp->live = false;
+            qp->send_queue.reset();
+            qp->receive_queue.reset();
             return EINVAL;
         }
         ugdr::control::QpAttributes attributes;

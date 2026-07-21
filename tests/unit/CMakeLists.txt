@@ -79,6 +79,28 @@ add_test(
     COMMAND ugdr_qp_test
 )
 
+add_executable(ugdr_shared_ring_test
+    shared_ring_test.cpp
+)
+target_link_libraries(ugdr_shared_ring_test
+    PRIVATE
+        Threads::Threads
+        ugdr_queue
+)
+add_test(
+    NAME ugdr_shared_ring
+    COMMAND ugdr_shared_ring_test
+)
+
+add_executable(ugdr_shared_ring_benchmark
+    shared_ring_benchmark.cpp
+)
+target_link_libraries(ugdr_shared_ring_benchmark
+    PRIVATE
+        Threads::Threads
+        ugdr_queue
+)
+
 add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )

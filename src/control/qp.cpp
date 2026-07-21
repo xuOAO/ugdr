@@ -1,4 +1,6 @@
 #include "control/qp.hpp"
+#include "control/queue_descriptor.hpp"
+#include "queue/descriptors.hpp"
 
 #include <arpa/inet.h>
 
@@ -476,6 +478,48 @@ ControlServiceResult QpService::handle_create_qp(ipc::SessionId session_id,
     record.rq = {attributes.max_recv_wr, attributes.max_recv_sge};
     record.qp_type = attributes.qp_type;
     record.sq_sig_all = attributes.sq_sig_all;
+    std::uint32_t send_stride = 0;
+    std::uint32_t receive_stride = 0;
+    int queue_status = queue::send_slot_stride(attributes.max_send_sge, &send_stride);
+    if (queue_status == 0) {
+        queue_status = queue::receive_slot_stride(attributes.max_recv_sge, &receive_stride);
+    }
+    if (queue_status != 0) {
+        return response_for(request, queue_status);
+    }
+    const queue::QueueDescriptor send_descriptor{queue::QueueKind::send, attributes.max_send_wr,
+                                                 send_stride};
+    const queue::QueueDescriptor receive_descriptor{queue::QueueKind::receive,
+                                                    attributes.max_recv_wr, receive_stride};
+    queue_status = queue::create_shared_ring(send_descriptor, &record.send_queue);
+    if (queue_status == 0) {
+        queue_status = queue::create_shared_ring(receive_descriptor, &record.receive_queue);
+    }
+    if (queue_status != 0) {
+        return response_for(request, queue_status);
+    }
+    int send_fd = -1;
+    int receive_fd = -1;
+    queue_status = record.send_queue.duplicate_fd(&send_fd);
+    if (queue_status == 0) {
+        queue_status = record.receive_queue.duplicate_fd(&receive_fd);
+    }
+    ipc::UniqueFd send_response_fd(send_fd);
+    ipc::UniqueFd receive_response_fd(receive_fd);
+    if (queue_status != 0) {
+        return response_for(request, queue_status);
+    }
+    std::vector<std::byte> encoded_descriptors;
+    queue_status =
+        encode_queue_descriptors({send_descriptor, receive_descriptor}, &encoded_descriptors);
+    if (queue_status != 0) {
+        return response_for(request, queue_status);
+    }
+    ControlServiceResult result = response_for(request);
+    result.response.opaque = std::move(encoded_descriptors);
+    result.response.fd_indices = {0, 1};
+    result.file_descriptors.push_back(std::move(send_response_fd));
+    result.file_descriptors.push_back(std::move(receive_response_fd));
     if (next_qp_num_ == 0) {
         return response_for(request, ENOSPC);
     }
@@ -484,7 +528,15 @@ ControlServiceResult QpService::handle_create_qp(ipc::SessionId session_id,
     if (!identity.has_value()) {
         return response_for(request, ENOSPC);
     }
-    if (!qp_num_index_.emplace(qps_.resolve(session_id, *identity)->qp_num, *identity).second) {
+    bool indexed = false;
+    try {
+        indexed =
+            qp_num_index_.emplace(qps_.resolve(session_id, *identity)->qp_num, *identity).second;
+    } catch (...) {
+        (void)qps_.erase(session_id, *identity);
+        return response_for(request, ENOMEM);
+    }
+    if (!indexed) {
         (void)qps_.erase(session_id, *identity);
         return response_for(request, ENOSPC);
     }
@@ -494,7 +546,6 @@ ControlServiceResult QpService::handle_create_qp(ipc::SessionId session_id,
         ++recv_cq->qp_references;
     }
 
-    ControlServiceResult result = response_for(request);
     result.response.object_identity = *identity;
     return result;
 }
@@ -663,12 +714,74 @@ std::size_t QpService::qp_count() const noexcept {
 }
 
 int client_create_qp(ControlClient &client, std::uint64_t pd_identity,
-                     const QpCreateAttributes &attributes, std::uint64_t *qp_identity) {
-    if (pd_identity == 0 || !valid_qp_create_attributes(attributes)) {
+                     const QpCreateAttributes &attributes, std::uint64_t *qp_identity,
+                     queue::SharedRing *send_queue, queue::SharedRing *receive_queue) {
+    if (pd_identity == 0 || !valid_qp_create_attributes(attributes) || qp_identity == nullptr ||
+        send_queue == nullptr || receive_queue == nullptr || send_queue->valid() ||
+        receive_queue->valid()) {
         return EINVAL;
     }
-    return call_identity(client, make_create_qp_request(pd_identity, attributes), ObjectType::qp,
-                         qp_identity);
+    DecodedControlResponse response;
+    const int call_status = client.call(make_create_qp_request(pd_identity, attributes), &response);
+    if (call_status != 0) {
+        return call_status;
+    }
+    if (response.value.status != 0) {
+        return response.value.status;
+    }
+    if (validate_identity(response.value.object_identity, ObjectType::qp) != 0) {
+        return EPROTO;
+    }
+    if (response.value.fd_indices != std::vector<std::uint32_t>{0, 1} ||
+        response.file_descriptors.size() != 2) {
+        (void)client_destroy_qp(client, response.value.object_identity);
+        return EPROTO;
+    }
+    std::uint32_t send_stride = 0;
+    std::uint32_t receive_stride = 0;
+    int status = queue::send_slot_stride(attributes.max_send_sge, &send_stride);
+    if (status == 0) {
+        status = queue::receive_slot_stride(attributes.max_recv_sge, &receive_stride);
+    }
+    if (status != 0) {
+        (void)client_destroy_qp(client, response.value.object_identity);
+        return status;
+    }
+    const queue::QueueDescriptor expected_send{queue::QueueKind::send, attributes.max_send_wr,
+                                               send_stride};
+    const queue::QueueDescriptor expected_receive{queue::QueueKind::receive, attributes.max_recv_wr,
+                                                  receive_stride};
+    std::vector<queue::QueueDescriptor> descriptors;
+    const int decode_status = decode_queue_descriptors(response.value.opaque, &descriptors);
+    if (decode_status != 0 || descriptors.size() != 2 || descriptors[0] != expected_send ||
+        descriptors[1] != expected_receive) {
+        (void)client_destroy_qp(client, response.value.object_identity);
+        return decode_status == EPROTONOSUPPORT ? decode_status : EPROTO;
+    }
+    queue::SharedRing mapped_send;
+    queue::SharedRing mapped_receive;
+    status =
+        queue::map_shared_ring(response.file_descriptors[0].get(), expected_send, &mapped_send);
+    if (status == 0) {
+        status = queue::map_shared_ring(response.file_descriptors[1].get(), expected_receive,
+                                        &mapped_receive);
+    }
+    if (status != 0) {
+        (void)client_destroy_qp(client, response.value.object_identity);
+        return status;
+    }
+    *qp_identity = response.value.object_identity;
+    *send_queue = std::move(mapped_send);
+    *receive_queue = std::move(mapped_receive);
+    return 0;
+}
+
+int client_create_qp(ControlClient &client, std::uint64_t pd_identity,
+                     const QpCreateAttributes &attributes, std::uint64_t *qp_identity) {
+    queue::SharedRing send_queue;
+    queue::SharedRing receive_queue;
+    return client_create_qp(client, pd_identity, attributes, qp_identity, &send_queue,
+                            &receive_queue);
 }
 
 int client_destroy_qp(ControlClient &client, std::uint64_t qp_identity) {

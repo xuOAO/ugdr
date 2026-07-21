@@ -1,4 +1,6 @@
 #include "control/pd_mr_cq.hpp"
+#include "control/queue_descriptor.hpp"
+#include "queue/descriptors.hpp"
 
 #include <arpa/inet.h>
 
@@ -482,14 +484,38 @@ ControlServiceResult PdMrCqService::handle_create_cq(ipc::SessionId session_id,
     if (context == nullptr) {
         return response_for(request, EINVAL);
     }
-    const auto identity =
-        cqs_.insert(session_id, CqRecord{request.value.object_identity,
-                                         static_cast<std::uint32_t>(request.value.length), 0});
+    const queue::QueueDescriptor descriptor{queue::QueueKind::completion,
+                                            static_cast<std::uint32_t>(request.value.length),
+                                            queue::completion_slot_stride()};
+    queue::SharedRing completions;
+    const int create_status = queue::create_shared_ring(descriptor, &completions);
+    if (create_status != 0) {
+        return response_for(request, create_status);
+    }
+    int response_fd = -1;
+    const int duplicate_status = completions.duplicate_fd(&response_fd);
+    if (duplicate_status != 0) {
+        return response_for(request, duplicate_status);
+    }
+    ipc::UniqueFd response_descriptor(response_fd);
+    std::vector<std::byte> encoded_descriptor;
+    const int encode_status = encode_queue_descriptors({descriptor}, &encoded_descriptor);
+    if (encode_status != 0) {
+        return response_for(request, encode_status);
+    }
+    ControlServiceResult result = response_for(request);
+    result.response.opaque = std::move(encoded_descriptor);
+    result.response.fd_indices = {0};
+    result.file_descriptors.push_back(std::move(response_descriptor));
+    CqRecord record;
+    record.context_identity = request.value.object_identity;
+    record.cqe = static_cast<std::uint32_t>(request.value.length);
+    record.completions = std::move(completions);
+    const auto identity = cqs_.insert(session_id, std::move(record));
     if (!identity.has_value()) {
         return response_for(request, ENOSPC);
     }
     ++context->child_count;
-    ControlServiceResult result = response_for(request);
     result.response.object_identity = *identity;
     return result;
 }
@@ -656,11 +682,51 @@ int client_deregister_mr(ControlClient &client, std::uint64_t mr_identity) {
 }
 
 int client_create_cq(ControlClient &client, std::uint64_t context_identity, std::uint32_t cqe,
+                     std::uint64_t *cq_identity, queue::SharedRing *completions) {
+    if (context_identity == 0 || cqe == 0 || cq_identity == nullptr || completions == nullptr ||
+        completions->valid()) {
+        return EINVAL;
+    }
+    DecodedControlResponse response;
+    const int call_status = client.call(make_create_cq_request(context_identity, cqe), &response);
+    if (call_status != 0) {
+        return call_status;
+    }
+    if (response.value.status != 0) {
+        return response.value.status;
+    }
+    if (validate_identity(response.value.object_identity, ObjectType::cq) != 0) {
+        return EPROTO;
+    }
+    if (response.value.fd_indices != std::vector<std::uint32_t>{0} ||
+        response.file_descriptors.size() != 1) {
+        (void)client_destroy_cq(client, response.value.object_identity);
+        return EPROTO;
+    }
+    std::vector<queue::QueueDescriptor> descriptors;
+    const int decode_status = decode_queue_descriptors(response.value.opaque, &descriptors);
+    const queue::QueueDescriptor expected{queue::QueueKind::completion, cqe,
+                                          queue::completion_slot_stride()};
+    if (decode_status != 0 || descriptors.size() != 1 || descriptors[0] != expected) {
+        (void)client_destroy_cq(client, response.value.object_identity);
+        return decode_status == EPROTONOSUPPORT ? decode_status : EPROTO;
+    }
+    queue::SharedRing mapped;
+    const int map_status =
+        queue::map_shared_ring(response.file_descriptors[0].get(), expected, &mapped);
+    if (map_status != 0) {
+        (void)client_destroy_cq(client, response.value.object_identity);
+        return map_status;
+    }
+    *cq_identity = response.value.object_identity;
+    *completions = std::move(mapped);
+    return 0;
+}
+
+int client_create_cq(ControlClient &client, std::uint64_t context_identity, std::uint32_t cqe,
                      std::uint64_t *cq_identity) {
-    return context_identity == 0 || cqe == 0
-               ? EINVAL
-               : call_identity(client, make_create_cq_request(context_identity, cqe),
-                               ObjectType::cq, cq_identity);
+    queue::SharedRing ignored;
+    return client_create_cq(client, context_identity, cqe, cq_identity, &ignored);
 }
 
 int client_destroy_cq(ControlClient &client, std::uint64_t cq_identity) {

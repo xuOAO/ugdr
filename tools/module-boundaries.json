@@ -12,6 +12,10 @@
     "src/control",
     "src/control/pd_mr_cq.hpp",
     "src/control/pd_mr_cq.cpp",
+    "src/queue",
+    "src/queue/descriptors.hpp",
+    "src/queue/shared_ring.hpp",
+    "src/queue/shared_ring.cpp",
     "src/worker",
     "src/gpu",
     "src/gpu/cuda_ipc_memory.hpp",
@@ -27,6 +31,8 @@
     "tests/unit/object_registry_test.cpp",
     "tests/unit/device_context_test.cpp",
     "tests/unit/pd_mr_cq_test.cpp",
+    "tests/unit/shared_ring_test.cpp",
+    "tests/unit/shared_ring_benchmark.cpp",
     "tests/__init__.py",
     "tests/integration",
     "tests/integration/__init__.py",
@@ -35,6 +41,7 @@
     "tests/integration/device_context_client_server_test.cpp",
     "tests/integration/pd_mr_cq_client_server_test.cpp",
     "tests/integration/cuda_ipc_mr_test.cpp",
+    "tests/integration/shared_queue_mapping_test.cpp",
     "tests/integration/test_ugdr_environment.py",
     "tests/integration/test_ugdr_quality.py",
     "tests/integration/test_ugdr_workflow.py",
@@ -130,6 +137,7 @@
   "production_targets": [
     "ugdr_api",
     "ugdr_ipc",
+    "ugdr_queue",
     "ugdr_control",
     "ugdr_worker",
     "ugdr_gpu",
@@ -150,8 +158,16 @@
       "to": "ugdr_gpu"
     },
     {
+      "from": "ugdr_api",
+      "to": "ugdr_queue"
+    },
+    {
       "from": "ugdr_control",
       "to": "ugdr_ipc"
+    },
+    {
+      "from": "ugdr_control",
+      "to": "ugdr_queue"
     },
     {
       "from": "ugdr_client",
@@ -170,12 +186,20 @@
       "to": "ugdr_gpu"
     },
     {
+      "from": "ugdr_client",
+      "to": "ugdr_queue"
+    },
+    {
       "from": "ugdr_worker",
       "to": "ugdr_control"
     },
     {
       "from": "ugdr_worker",
       "to": "ugdr_ipc"
+    },
+    {
+      "from": "ugdr_worker",
+      "to": "ugdr_queue"
     },
     {
       "from": "ugdr_daemon",
@@ -192,6 +216,10 @@
     {
       "from": "ugdr_daemon",
       "to": "ugdr_gpu"
+    },
+    {
+      "from": "ugdr_daemon",
+      "to": "ugdr_queue"
     }
   ],
   "target_metadata": {
@@ -202,6 +230,10 @@
     "ugdr_ipc": {
       "path": "src/ipc",
       "responsibility": "通用本机 IPC 协议、fd 传输与 client/server 封装"
+    },
+    "ugdr_queue": {
+      "path": "src/queue",
+      "responsibility": "版本化共享 ring 布局、直接 descriptor slot 与跨进程 mapping 原语"
     },
     "ugdr_control": {
       "path": "src/control",
