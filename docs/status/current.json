@@ -3,9 +3,16 @@
   "version": "v1",
   "feature": "F03",
   "step": "F03-S03",
-  "state": "awaiting_acceptance",
-  "next_actions": {},
+  "state": "completed",
+  "next_actions": {
+    "F03": [
+      {
+        "step": "F03-S04",
+        "action": "QP/SQ/RQ 所有权与 CQ 关联"
+      }
+    ]
+  },
   "blockers": [],
-  "updated_at": "2026-07-21T17:33:49+08:00",
-  "updated_by": "agent"
+  "updated_at": "2026-07-21T17:44:40+08:00",
+  "updated_by": "human"
 }
