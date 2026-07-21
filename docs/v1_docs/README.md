@@ -25,3 +25,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F03-S06 公开 API 集成与控制面验收](F03_Daemon_控制面与对象生命周期/F03-S06_公开_API_集成与控制面验收_步骤文档.md)
 - [F04 SQ、RQ、CQ 队列系统功能文档](F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md)
 - [F04-S01 共享队列与映射边界](F04_SQ、RQ、CQ_队列系统/F04-S01_共享队列与映射边界_步骤文档.md)
+- [F04-S02 SQ、RQ posting 快路径](F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md)
