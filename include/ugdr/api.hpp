@@ -45,6 +45,10 @@ typedef enum ugdr_qp_attr_mask {
     UGDR_QP_STATE = 1U << 0U,
     UGDR_QP_CUR_STATE = 1U << 1U,
     UGDR_QP_ACCESS_FLAGS = 1U << 3U,
+    UGDR_QP_TIMEOUT = 1U << 9U,
+    UGDR_QP_RETRY_CNT = 1U << 10U,
+    UGDR_QP_RNR_RETRY = 1U << 11U,
+    UGDR_QP_MIN_RNR_TIMER = 1U << 15U,
 } ugdr_qp_attr_mask;
 
 typedef enum ugdr_wr_opcode {
@@ -76,10 +80,73 @@ typedef enum ugdr_wc_opcode {
     UGDR_WC_RECV_RDMA_WITH_IMM = 129,
 } ugdr_wc_opcode;
 
+typedef enum ugdr_wc_flags {
+    UGDR_WC_WITH_IMM = 1U << 1U,
+} ugdr_wc_flags;
+
 typedef enum ugdr_access_flags {
     UGDR_ACCESS_LOCAL_WRITE = 1U << 0U,
     UGDR_ACCESS_REMOTE_WRITE = 1U << 1U,
 } ugdr_access_flags;
+
+struct ugdr_mr {
+    ugdr_context *context;
+    ugdr_pd *pd;
+    void *addr;
+    size_t length;
+    uint32_t handle;
+    uint32_t lkey;
+    uint32_t rkey;
+};
+
+struct ugdr_sge {
+    uint64_t addr;
+    uint32_t length;
+    uint32_t lkey;
+};
+
+struct ugdr_send_wr {
+    uint64_t wr_id;
+    ugdr_send_wr *next;
+    ugdr_sge *sg_list;
+    int num_sge;
+    ugdr_wr_opcode opcode;
+    unsigned int send_flags;
+    union {
+        uint32_t imm_data;
+    };
+    union {
+        struct {
+            uint64_t remote_addr;
+            uint32_t rkey;
+        } rdma;
+    } wr;
+};
+
+struct ugdr_recv_wr {
+    uint64_t wr_id;
+    ugdr_recv_wr *next;
+    ugdr_sge *sg_list;
+    int num_sge;
+};
+
+struct ugdr_wc {
+    uint64_t wr_id;
+    ugdr_wc_status status;
+    ugdr_wc_opcode opcode;
+    uint32_t vendor_err;
+    uint32_t byte_len;
+    union {
+        uint32_t imm_data;
+    };
+    uint32_t qp_num;
+    uint32_t src_qp;
+    unsigned int wc_flags;
+    uint16_t pkey_index;
+    uint16_t slid;
+    uint8_t sl;
+    uint8_t dlid_path_bits;
+};
 
 struct ugdr_qp_init_attr {
     ugdr_cq *send_cq;
@@ -96,6 +163,10 @@ struct ugdr_qp_attr {
     ugdr_qp_state qp_state;
     ugdr_qp_state cur_qp_state;
     int qp_access_flags;
+    uint8_t timeout;
+    uint8_t retry_cnt;
+    uint8_t rnr_retry;
+    uint8_t min_rnr_timer;
 };
 
 struct ugdr_qp_conn_info {
@@ -127,7 +198,8 @@ int ugdr_query_qp(ugdr_qp *qp, ugdr_qp_attr *attr, int attr_mask,
                   ugdr_qp_init_attr *init_attr) UGDR_NOEXCEPT;
 
 int ugdr_query_qp_conn_info(ugdr_qp *qp, ugdr_qp_conn_info *info) UGDR_NOEXCEPT;
-int ugdr_connect_qp(ugdr_qp *qp, const ugdr_qp_conn_info *remote_info) UGDR_NOEXCEPT;
+int ugdr_connect_qp(ugdr_qp *qp, const ugdr_qp_conn_info *remote_info, const ugdr_qp_attr *attr,
+                    int attr_mask) UGDR_NOEXCEPT;
 
 int ugdr_post_send(ugdr_qp *qp, ugdr_send_wr *wr, ugdr_send_wr **bad_wr) UGDR_NOEXCEPT;
 int ugdr_post_recv(ugdr_qp *qp, ugdr_recv_wr *wr, ugdr_recv_wr **bad_wr) UGDR_NOEXCEPT;
