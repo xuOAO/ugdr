@@ -8,6 +8,7 @@
     "CMakeLists.txt",
     "include/ugdr",
     "src/api",
+    "src/ipc",
     "src/control",
     "src/worker",
     "src/gpu",
@@ -17,10 +18,13 @@
     "tests/unit/api_contract_c_test.c",
     "tests/unit/api_contract_test.cpp",
     "tests/unit/libibverbs_alignment_test.cpp",
+    "tests/unit/ipc_protocol_test.cpp",
+    "tests/unit/ipc_adapter_test.cpp",
     "tests/__init__.py",
     "tests/integration",
     "tests/integration/__init__.py",
     "tests/integration/check_client_contract_failures.py",
+    "tests/integration/ipc_client_server_test.cpp",
     "tests/integration/test_ugdr_environment.py",
     "tests/integration/test_ugdr_quality.py",
     "tests/integration/test_ugdr_workflow.py",
@@ -112,6 +116,7 @@
   ],
   "production_targets": [
     "ugdr_api",
+    "ugdr_ipc",
     "ugdr_control",
     "ugdr_worker",
     "ugdr_gpu",
@@ -119,6 +124,10 @@
     "ugdr_daemon"
   ],
   "allowed_edges": [
+    {
+      "from": "ugdr_control",
+      "to": "ugdr_ipc"
+    },
     {
       "from": "ugdr_client",
       "to": "ugdr_api"
@@ -128,8 +137,16 @@
       "to": "ugdr_control"
     },
     {
+      "from": "ugdr_worker",
+      "to": "ugdr_ipc"
+    },
+    {
       "from": "ugdr_daemon",
       "to": "ugdr_control"
+    },
+    {
+      "from": "ugdr_daemon",
+      "to": "ugdr_ipc"
     },
     {
       "from": "ugdr_daemon",
@@ -145,9 +162,13 @@
       "path": "src/api",
       "responsibility": "Client 可见 API 门面占位"
     },
+    "ugdr_ipc": {
+      "path": "src/ipc",
+      "responsibility": "通用本机 IPC 协议、fd 传输与 client/server 封装"
+    },
     "ugdr_control": {
       "path": "src/control",
-      "responsibility": "控制面元数据与资源管理占位"
+      "responsibility": "UGDR 控制语义 adapter 与后续资源管理边界"
     },
     "ugdr_worker": {
       "path": "src/worker",

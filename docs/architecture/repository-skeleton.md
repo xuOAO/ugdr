@@ -6,6 +6,11 @@ This document is the human-readable entry point for the repository skeleton. It 
 
 `tools/ugdr` is the repository-local Python entry for development harness commands. F01-S03 owns its `bootstrap` and `doctor` subcommands; F01-S04 adds `format`, `lint`, `build`, `test`, and `smoke`; F01-S05 adds deterministic `state show`, `state next`, `state transition`, and `state advance-scope` commands backed by `tools/workflow-rules.json` and the existing state core. Their implementation remains under `tools/ugdr_cli`, uses `.clang-format` and `.clang-tidy` as repository quality rules, and does not change the production target dependency graph. `.agents/skills/ugdr-continue-project/` supplies the Agent-facing orchestration loop, while Git/PR safety helpers remain testable repository tooling rather than project-state facts.
 
+`ugdr_ipc` is the business-neutral local IPC layer. It owns the Unix Domain `SOCK_SEQPACKET`
+envelope, `SCM_RIGHTS` fd transfer, and synchronous client/single-threaded server types.
+`ugdr_control` depends on it only through the typed UGDR adapter; verbs resources remain outside
+F03-S01.
+
 <!-- BEGIN GENERATED: module-boundaries -->
 ## Repository areas
 
@@ -31,7 +36,8 @@ This document is the human-readable entry point for the repository skeleton. It 
 | Target | Path | Responsibility |
 |---|---|---|
 | `ugdr_api` | `src/api` | Client 可见 API 门面占位 |
-| `ugdr_control` | `src/control` | 控制面元数据与资源管理占位 |
+| `ugdr_ipc` | `src/ipc` | 通用本机 IPC 协议、fd 传输与 client/server 封装 |
+| `ugdr_control` | `src/control` | UGDR 控制语义 adapter 与后续资源管理边界 |
 | `ugdr_worker` | `src/worker` | 数据面 Worker 占位 |
 | `ugdr_gpu` | `src/gpu` | CUDA 执行模块占位 |
 | `ugdr_client` | `apps/client` | 最小 Client 可执行文件 |
@@ -42,9 +48,10 @@ This document is the human-readable entry point for the repository skeleton. It 
 | Caller | Allowed dependencies |
 |---|---|
 | `ugdr_api` | None |
-| `ugdr_control` | None |
-| `ugdr_worker` | `ugdr_control` |
+| `ugdr_ipc` | None |
+| `ugdr_control` | `ugdr_ipc` |
+| `ugdr_worker` | `ugdr_control`, `ugdr_ipc` |
 | `ugdr_gpu` | None |
 | `ugdr_client` | `ugdr_api` |
-| `ugdr_daemon` | `ugdr_control`, `ugdr_worker`, `ugdr_gpu` |
+| `ugdr_daemon` | `ugdr_control`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu` |
 <!-- END GENERATED: module-boundaries -->
