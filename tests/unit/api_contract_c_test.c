@@ -1,8 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "ugdr/api.hpp"
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 int main(void) {
     int num_devices = 17;
@@ -17,6 +22,13 @@ int main(void) {
     struct ugdr_wc expected_wc;
     struct ugdr_send_wr *bad_send = (struct ugdr_send_wr *)(uintptr_t)1;
     struct ugdr_recv_wr *bad_recv = (struct ugdr_recv_wr *)(uintptr_t)2;
+    char socket_path[128];
+
+    (void)snprintf(socket_path, sizeof(socket_path), "/tmp/ugdr-no-daemon-%ld.sock",
+                   (long)getpid());
+    if (setenv("UGDR_DAEMON_SOCKET", socket_path, 1) != 0) {
+        return 1;
+    }
 
     mr.lkey = UINT32_C(0x11223344);
     mr.rkey = UINT32_C(0x55667788);
@@ -34,51 +46,51 @@ int main(void) {
     expected_wc = wc;
 
     errno = 0;
-    if (ugdr_get_device_list(&num_devices) != 0 || errno != EOPNOTSUPP || num_devices != 17) {
-        return 1;
-    }
-    errno = 0;
-    ugdr_free_device_list(0);
-    if (errno != EOPNOTSUPP) {
+    if (ugdr_get_device_list(&num_devices) != 0 || errno == 0 || num_devices != 17) {
         return 2;
     }
     errno = 0;
-    if (ugdr_open_device(0) != 0 || errno != EOPNOTSUPP) {
+    ugdr_free_device_list(0);
+    if (errno != EINVAL) {
         return 3;
     }
     errno = 0;
-    if (ugdr_close_device(0) != -1 || errno != EOPNOTSUPP) {
+    if (ugdr_open_device(0) != 0 || errno != EINVAL) {
         return 4;
     }
     errno = 0;
-    if (ugdr_alloc_pd(0) != 0 || errno != EOPNOTSUPP) {
+    if (ugdr_close_device(0) != -1 || errno != EINVAL) {
         return 5;
+    }
+    errno = 0;
+    if (ugdr_alloc_pd(0) != 0 || errno != EOPNOTSUPP) {
+        return 6;
     }
     if (ugdr_dealloc_pd(0) != EOPNOTSUPP || ugdr_reg_mr(0, 0, 0, 0) != 0 || errno != EOPNOTSUPP ||
         ugdr_dereg_mr(0) != EOPNOTSUPP) {
-        return 6;
+        return 7;
     }
     if (ugdr_create_cq(0, 0, 0, 0, 0) != 0 || errno != EOPNOTSUPP ||
         ugdr_destroy_cq(0) != EOPNOTSUPP || ugdr_poll_cq(0, 1, &wc) != -EOPNOTSUPP ||
         memcmp(&wc, &expected_wc, sizeof(wc)) != 0) {
-        return 7;
+        return 8;
     }
     if (ugdr_create_qp(0, &init_attr) != 0 || errno != EOPNOTSUPP ||
         ugdr_destroy_qp(0) != EOPNOTSUPP || ugdr_modify_qp(0, &attr, UGDR_QP_STATE) != EOPNOTSUPP ||
         ugdr_query_qp(0, &attr, UGDR_QP_STATE, &init_attr) != EOPNOTSUPP ||
         ugdr_query_qp_conn_info(0, &info) != EOPNOTSUPP ||
         ugdr_connect_qp(0, &info, &attr, UGDR_QP_TIMEOUT) != EOPNOTSUPP) {
-        return 8;
+        return 9;
     }
     if (ugdr_post_send(0, &send_wr, &bad_send) != EOPNOTSUPP ||
         bad_send != (struct ugdr_send_wr *)(uintptr_t)1 ||
         ugdr_post_recv(0, &recv_wr, &bad_recv) != EOPNOTSUPP ||
         bad_recv != (struct ugdr_recv_wr *)(uintptr_t)2) {
-        return 9;
+        return 10;
     }
 
     return sge.lkey == mr.lkey && send_wr.wr.rdma.rkey == mr.rkey && recv_wr.sg_list == 0 &&
                    wc.imm_data == send_wr.imm_data
                ? 0
-               : 10;
+               : 11;
 }

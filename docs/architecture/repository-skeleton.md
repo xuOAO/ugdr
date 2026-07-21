@@ -9,7 +9,8 @@ This document is the human-readable entry point for the repository skeleton. It 
 `ugdr_ipc` is the business-neutral local IPC layer. It owns the Unix Domain `SOCK_SEQPACKET`
 envelope, `SCM_RIGHTS` fd transfer, and synchronous client/single-threaded server types.
 `ugdr_control` depends on it only through the typed UGDR adapter; verbs resources remain outside
-F03-S01.
+F03-S01. F03-S02 adds generation-safe typed registries and Device/Context control semantics;
+`ugdr_api` uses that control boundary without depending directly on the generic IPC layer.
 
 <!-- BEGIN GENERATED: module-boundaries -->
 ## Repository areas
@@ -35,9 +36,9 @@ F03-S01.
 
 | Target | Path | Responsibility |
 |---|---|---|
-| `ugdr_api` | `src/api` | Client 可见 API 门面占位 |
+| `ugdr_api` | `src/api` | Client 可见 API、Device/Context proxy 与进程级控制连接 |
 | `ugdr_ipc` | `src/ipc` | 通用本机 IPC 协议、fd 传输与 client/server 封装 |
-| `ugdr_control` | `src/control` | UGDR 控制语义 adapter 与后续资源管理边界 |
+| `ugdr_control` | `src/control` | UGDR 控制语义 adapter、类型化对象注册表与 Device/Context 服务 |
 | `ugdr_worker` | `src/worker` | 数据面 Worker 占位 |
 | `ugdr_gpu` | `src/gpu` | CUDA 执行模块占位 |
 | `ugdr_client` | `apps/client` | 最小 Client 可执行文件 |
@@ -47,11 +48,11 @@ F03-S01.
 
 | Caller | Allowed dependencies |
 |---|---|
-| `ugdr_api` | None |
+| `ugdr_api` | `ugdr_control`, `ugdr_ipc` |
 | `ugdr_ipc` | None |
 | `ugdr_control` | `ugdr_ipc` |
 | `ugdr_worker` | `ugdr_control`, `ugdr_ipc` |
 | `ugdr_gpu` | None |
-| `ugdr_client` | `ugdr_api` |
+| `ugdr_client` | `ugdr_api`, `ugdr_control`, `ugdr_ipc` |
 | `ugdr_daemon` | `ugdr_control`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu` |
 <!-- END GENERATED: module-boundaries -->

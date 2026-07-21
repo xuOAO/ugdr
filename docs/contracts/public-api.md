@@ -5,6 +5,7 @@ Sources:
 - [reviewed F02-S01 revision 16](../v1_docs/F02_API_契约与对象模型/F02-S01_v1_公开_API_表面与对齐基线_步骤文档.md)
 - [reviewed F02-S03 revision 7](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
+- [reviewed F03-S02 revision 11](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S02_类型化_generation_handle_注册表与_Context_步骤文档.md)
 
 `include/ugdr/api.hpp` exposes C-linkage `ugdr_*` symbols and C-compatible declarations. F02-S01
 freezes the symbol and type names needed by the v1 Client; F02-S03 defines the initial public QP
@@ -50,15 +51,15 @@ listed in [WR/WC and Completion Semantics](wr-wc-semantics.md). In particular, C
 `mr->lkey`, `mr->rkey`, `wr.imm_data`, `wr.wr.rdma.remote_addr`, `wr.wr.rdma.rkey`, and
 `wc.imm_data` without UGDR-specific getters or alternate nesting.
 
-## Functions and placeholder results
+## Functions and current results
 
-All functions are linkable in F02-S01. No function creates runtime state, consumes a WR, produces a
-WC, writes an output record, or returns a fake handle.
+All functions remain linkable. F03-S02 implements Device enumeration and Context lifecycle through
+the daemon; later resources retain their reviewed placeholders.
 
-| Function group | Public functions | F02-S01 placeholder result |
+| Function group | Public functions | Current result |
 |-|-|-|
-| Device list | `ugdr_get_device_list`, `ugdr_free_device_list` | Get returns null and sets `errno=EOPNOTSUPP` without changing `num_devices`. Free has no return channel, performs no work, and sets `errno=EOPNOTSUPP`. |
-| Context | `ugdr_open_device`, `ugdr_close_device` | Open returns null and sets `errno=EOPNOTSUPP`; close returns `-1` and sets `errno=EOPNOTSUPP`. |
+| Device list | `ugdr_get_device_list`, `ugdr_free_device_list` | Get returns a null-terminated daemon enumeration and writes `num_devices` only on success. Transport or protocol failure returns null with `errno`. Free invalidates that list's Device proxies; invalid or repeated free sets `errno=EINVAL`. |
+| Context | `ugdr_open_device`, `ugdr_close_device` | Open creates a session-owned daemon Context from a live Device. Close returns 0 on success; invalid/stale/repeated handles return `-1` with `errno=EINVAL`, while live children produce `EBUSY` without state change. |
 | PD | `ugdr_alloc_pd`, `ugdr_dealloc_pd` | Allocate returns null and sets `errno=EOPNOTSUPP`; deallocate returns `EOPNOTSUPP`. |
 | MR | `ugdr_reg_mr`, `ugdr_dereg_mr` | Register returns null and sets `errno=EOPNOTSUPP`; deregister returns `EOPNOTSUPP`. |
 | CQ | `ugdr_create_cq`, `ugdr_destroy_cq`, `ugdr_poll_cq` | Create returns null and sets `errno=EOPNOTSUPP`; destroy returns `EOPNOTSUPP`; poll returns `-EOPNOTSUPP` and does not write `wc`. |
@@ -72,7 +73,6 @@ their corresponding libibverbs APIs do.
 
 ## Explicit non-capabilities
 
-This F02 surface does not implement device discovery, IPC, daemon sessions, object lifecycle, QP
-transitions, endpoint resolution, queue storage, WR consumption, WC production, worker execution,
-network transport, or GPU data movement. A successful placeholder result would violate this
-contract.
+F03-S02 does not implement PD, MR, CQ, QP, queue storage, QP transitions, endpoint resolution, WR
+consumption, WC production, worker execution, network transport, or GPU data movement. Those entry
+points retain their placeholder result until their owning reviewed step is implemented.

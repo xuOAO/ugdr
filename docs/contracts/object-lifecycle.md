@@ -66,7 +66,7 @@ the caller may release blockers and retry.
 | Null handle, wrong object type, stale handle, or repeated destroy | Returns `EINVAL`. `ugdr_close_device` returns `-1` and sets `errno=EINVAL`. | None |
 | QP creation receives a PD, `send_cq`, and `recv_cq` that do not belong to one Context | Returns null and sets `errno=EINVAL`. | No partial QP and no new relationship |
 | Parent or CQ still has a Client-visible dependency | Reports `EBUSY` in the corresponding function's standard return domain. | None; the original handle remains valid |
-| Runtime object management remains unimplemented | The existing public entry point reports `EOPNOTSUPP`. | No fake handle, partial object, or successful placeholder state |
+| Resource type is not yet implemented beyond Device/Context | The corresponding PD/MR/CQ/QP public entry point reports `EOPNOTSUPP`. | No fake handle, partial object, or successful placeholder state |
 
 The daemon may use registries, generations, reference counts, or another internal technique to meet
 these results. Those mechanisms are not Client-visible contract.
