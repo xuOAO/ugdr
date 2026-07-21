@@ -2,9 +2,10 @@
 
 Sources:
 
-- [reviewed F02-S03 revision 7](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
+- [reviewed F02-S03 revision 19](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
 - [reviewed F03-S04 revision 7](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
+- [reviewed F03-S05 revision 13](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S05_QP_查询、状态转换与原子建连_步骤文档.md)
 
 This contract fixes the Client-visible v1 RC QP creation attributes, query records, connection
 identity, legal state changes, failure results, and atomic connection helper. F03-S04 implements
@@ -33,7 +34,6 @@ The declarations in `include/ugdr/api.hpp` use the following field order:
 |  | `rnr_retry` | `uint8_t` | Standard RNR retry encoding; value 7 means infinite retry. |
 |  | `min_rnr_timer` | `uint8_t` | Standard responder minimum RNR timer encoding. |
 | `ugdr_qp_conn_info` | `qp_num` | `uint32_t` | Standard-style QP number in the daemon control domain. |
-|  | `endpoint_id` | `uint64_t` | Opaque generation-safe endpoint resolution key. |
 
 v1 exposes no SRQ or inline-data field. It also exposes no GID, LID, MTU, PSN, IP address, port,
 or other hardware/network path attribute. The four retry attributes are the only standard RC timing
@@ -62,11 +62,9 @@ pointers, cross-Context relationships, or invalid fields return null with `errno
 no partial object. Provider resource limits and any capacity adjustment are deferred to the runtime
 implementation and are not simulated by F02.
 
-A successfully created QP starts in `UGDR_QPS_RESET`. F03-S04 keeps that state internal; F03-S05
-adds the queryable connection identity. `qp_num` is Client-visible and may follow the daemon's
-allocation policy. `endpoint_id`, not `qp_num` alone, is the generation-safe resolution key: after
-destruction, stale connection information must never resolve to a newly allocated QP that reused a
-number.
+A successfully created QP starts in `UGDR_QPS_RESET`. Its nonzero `qp_num` is allocated globally
+by the daemon and is never reused or wrapped during that daemon process lifetime. Destroy and
+disconnect remove the live-QPN index entry immediately; exhaustion returns `ENOSPC`.
 
 Connection information is exchanged only between Clients in the same daemon control domain. It is
 an in-memory public record, not a network or persistent wire format; this contract defines no byte
@@ -124,8 +122,8 @@ def connect(local_qp, remote_info, attr, attr_mask):
     if local_qp.is_bound_to_different_peer(remote_info):
         return EBUSY
     require(local_qp.state == INIT, EINVAL)
-    remote_qp = resolve_in_same_daemon(remote_info.endpoint_id)
-    require(remote_qp exists and remote_qp.qp_num == remote_info.qp_num, ENOENT)
+    remote_qp = resolve_live_qp_num_in_same_daemon(remote_info.qp_num)
+    require(remote_qp exists, ENOENT)
     require(remote_qp.type == RC and remote_qp.state in {INIT, RTR, RTS}, EINVAL)
 
     staged_retry_policy = validate_retry_encodings(attr)
@@ -144,7 +142,7 @@ binding, or a modified remote QP.
 | Condition | Result | Side effects |
 |-|-|-|
 | Invalid handle, null required pointer, malformed field, unknown mask bit, state-guard mismatch, or unsupported normal-state combination | `EINVAL` | None |
-| Remote `endpoint_id` is unknown, stale, outside the daemon control domain, or resolves with a different `qp_num` | `ENOENT` | None |
+| Remote `qp_num` is unknown, destroyed, disconnected, or outside the daemon control domain | `ENOENT` | None |
 | The local QP is already bound to a different peer | `EBUSY` | None |
 | Target state is SQD or SQE | `EOPNOTSUPP` | None |
 
@@ -158,17 +156,6 @@ outputs.
 
 ## Current runtime boundary
 
-F03-S04 activates the reviewed creation and destruction subset:
-
-- `ugdr_create_qp` validates the PD, CQs, Context relationship, capacities, RC type, and
-  `sq_sig_all`, preserves the init attributes, and creates no partial QP on failure.
-- `ugdr_destroy_qp` removes the QP's PD ownership and CQ references; invalid, stale, or repeated
-  handles return `EINVAL`.
-- `ugdr_modify_qp`, `ugdr_query_qp`, `ugdr_query_qp_conn_info`, and the four-argument
-  `ugdr_connect_qp` return `EOPNOTSUPP`.
-- Query placeholders do not write `ugdr_qp_attr`, `ugdr_qp_init_attr`, or
-  `ugdr_qp_conn_info`.
-
-Endpoint registration, real SQ/RQ allocation, WR processing, completion production, and ERR-flush
-execution are not implemented by F03-S04. Their Client-visible results are already fixed, and later
-runtime features must implement them without expanding the public surface.
+F03-S05 implements QPN allocation/indexing, query, the reviewed modify subset, and atomic
+same-daemon connect. Real SQ/RQ allocation, WR processing, completion production, ERR flushing,
+multi-host addressing, and connection-information serialization remain outside this step.

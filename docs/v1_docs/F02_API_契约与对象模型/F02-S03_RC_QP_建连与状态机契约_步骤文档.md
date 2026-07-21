@@ -4,13 +4,13 @@ source_token: "PHDgdmRjYovDiTxnbNycuH1znHd"
 source_url: "https://my.feishu.cn/docx/PHDgdmRjYovDiTxnbNycuH1znHd"
 source_path: "我的空间 / UGDR / UGDR_v1 设计 / F02_API 契约与对象模型 / F02-S03_RC QP 建连与状态机契约 步骤文档"
 source_title: "F02-S03_RC QP 建连与状态机契约 步骤文档"
-source_revision: 7
+source_revision: 19
 doc_type: "step"
 content_mode: "agent"
 review_status: "reviewed"
-synced_at: "2026-07-20T23:05:33+08:00"
+synced_at: "2026-07-21T20:16:30+08:00"
 generated_by: "ugdr-sync-docs-to-md"
-generated_body_sha256: "edc5ad13b2202bbdbd0a2402ca3a52486f6512d5e4cc48b09890785d35624066"
+generated_body_sha256: "4212139240fdc99895abae73781d7f5d9cbd0e7916801f836f8eaca0c86be833"
 ---
 # F02-S03_RC QP 建连与状态机契约 步骤文档
 
@@ -45,7 +45,7 @@ generated_body_sha256: "edc5ad13b2202bbdbd0a2402ca3a52486f6512d5e4cc48b09890785d
 | `ugdr_qp_init_attr` | `send_cq`、`recv_cq`、`max_send_wr`、`max_recv_wr`、`max_send_sge`、`max_recv_sge`、`qp_type`、`sq_sig_all` | CQ 必须与 PD 同属一个 Context；容量和 SGE 上限必须非零；`qp_type` 仅接受 RC；`sq_sig_all` 仅接受 0 或 1。不暴露 SRQ 和 inline data。 |
 | `ugdr_qp_attr` | `qp_state`、`cur_qp_state`、`qp_access_flags` | `qp_access_flags` 的 v1 QP 能力只允许 `UGDR_ACCESS_REMOTE_WRITE`；Local Write 是 MR 权限，不是 QP 转换属性。 |
 | `ugdr_qp_attr_mask` | `UGDR_QP_STATE = 1U << 0U`、`UGDR_QP_CUR_STATE = 1U << 1U`、`UGDR_QP_ACCESS_FLAGS = 1U << 3U` | 数值与对应 `ibv_qp_attr_mask` 位对齐；未知位返回 `EINVAL`。 |
-| `ugdr_qp_conn_info` | `uint32_t qp_num`、`uint64_t endpoint_id` | `qp_num` 是标准风格的可观察 QP 编号；`endpoint_id` 是 generation-safe 的不透明解析键。销毁后旧 endpoint 不得解析到复用的 QP。 |
+| `ugdr_qp_conn_info` | `uint32_t qp_num` | `qp_num` 是 daemon 控制域内的非零 QP 编号；同一 daemon 进程生命周期内全局分配且不复用。QP 销毁或 session 断连后，旧编号立即失效；daemon 重启后可重新分配。 |
 
 上述字段顺序就是公开结构顺序。不得增加为硬件或网络建连服务的保留字段；未来扩展通过重新审阅 API 契约处理。
 
@@ -53,9 +53,9 @@ generated_body_sha256: "edc5ad13b2202bbdbd0a2402ca3a52486f6512d5e4cc48b09890785d
 
 | 操作 | 成功结果 | 失败与原子性 |
 |-|-|-|
-| `ugdr_create_qp` | 校验 PD、两个 CQ、RC 类型、容量、SGE 上限和 `sq_sig_all`；创建的 QP 处于 RESET，并获得 daemon 控制域内可识别的 `qp_num` 与 generation-safe `endpoint_id`。 | 空指针、跨 Context 关联或非法字段返回空指针并令 `errno=EINVAL`；资源上限与实际容量策略留给运行时步骤，不在 F02 伪造成功。 |
+| `ugdr_create_qp` | 校验 PD、两个 CQ、RC 类型、容量、SGE 上限和 `sq_sig_all`；创建的 QP 处于 RESET，并获得 daemon 控制域内全局分配的非零 `qp_num`。编号耗尽时创建失败且 `errno=ENOSPC`。 | 空指针、跨 Context 关联或非法字段返回空指针并令 `errno=EINVAL`；资源上限与实际容量策略留给运行时步骤，不在 F02 伪造成功。 |
 | `ugdr_query_qp` | 按 mask 写入已请求的 state、current state 和 access flags，并返回创建时的 init attributes；若同时请求 state 和 current state，两者都是同一次快照的当前状态。 | 无效指针或未知 mask 位返回 `EINVAL`，所有输出保持不变。 |
-| `ugdr_query_qp_conn_info` | 活 QP 在任一状态均可查询本地 `qp_num` 和 `endpoint_id`；该信息不表示已连接。 | 无效或已销毁句柄返回 `EINVAL`，输出保持不变。 |
+| `ugdr_query_qp_conn_info` | 活 QP 在任一状态均可查询本地 `qp_num`；该信息不表示已连接。应用负责带外交换，v1 不定义交换通道或序列化。 | 无效或已销毁句柄返回 `EINVAL`，输出保持不变。 |
 
 ## 2.4 状态转换表
 
@@ -77,8 +77,8 @@ def connect(local_qp, remote_info):
     if local_qp.is_bound_to_different_peer(remote_info):
         return EBUSY
     require(local_qp.state == INIT, EINVAL)
-    remote_qp = resolve_in_same_daemon(remote_info.endpoint_id)
-    require(remote_qp exists and remote_qp.qp_num == remote_info.qp_num, ENOENT)
+    remote_qp = resolve_in_same_daemon(remote_info.qp_num)
+    require(remote_qp exists, ENOENT)
     require(remote_qp.type == RC and remote_qp.state in {INIT, RTR, RTS}, EINVAL)
 
     staged_peer = remote_qp.identity
@@ -87,14 +87,14 @@ def connect(local_qp, remote_info):
     return 0
 ```
 
-解析不到 endpoint、generation 已过期、`qp_num` 不匹配或不属于当前 daemon 控制域时统一返回 `ENOENT`。验证和 staged transition 任一步失败都不能改变本地 QP、远端 QP 或调用者输出；函数不隐式推进远端状态。
+远端 `qp_num` 未知、已销毁或不属于当前 daemon 控制域时返回 `ENOENT`。验证和 staged transition 任一步失败都不能改变本地 QP、远端 QP 或调用者输出；函数不隐式推进远端状态。
 
 ## 2.6 错误优先级与占位期行为
 
 | 条件 | 结果 |
 |-|-|
 | 无效句柄、空必需参数、非法字段、未知 mask、非法正常转换或状态 guard 不匹配 | `EINVAL` |
-| remote endpoint 未知、过期、跨控制域或 QP 编号不匹配 | `ENOENT` |
+| remote `qp_num` 未知、已销毁或不属于当前 daemon 控制域 | `ENOENT` |
 | 本地已绑定到不同 peer | `EBUSY` |
 | 请求进入 SQD 或 SQE | `EOPNOTSUPP` |
 | F02 尚无运行时实现的公开入口 | 保持现有 `EOPNOTSUPP` 占位结果；指针返回入口同时设置 `errno`，查询不得写输出。 |
@@ -125,7 +125,7 @@ flowchart LR
 |-|-|-|
 | 公开结构与数值 | 构建并运行 `api_contract_test`；静态断言字段类型、顺序、attr mask 数值、RC 与 QP state 数值。 | 编译和测试通过；Client 不需要 daemon、GPU 或 RDMA 设备。 |
 | 占位入口负向行为 | 对 create、modify、query、query connection info 与 connect 使用 sentinel 输出执行现有占位测试。 | 统一显式报告 `EOPNOTSUPP`，不返回成功、不写输出、不产生状态。 |
-| 状态与错误矩阵 | 逐行审计 `docs/contracts/rc-qp-state-machine.md`，覆盖 RESET→INIT、原子 connect、进入 ERR、SQD/SQE、非法转换、stale endpoint 与 peer 冲突。 | 每个合法和非法组合都有唯一结果；失败原子性和错误优先级明确。 |
+| 状态与错误矩阵 | 逐行审计 `docs/contracts/rc-qp-state-machine.md`，覆盖 RESET→INIT、原子 connect、进入 ERR、SQD/SQE、非法转换、已销毁 `qp_num` 与 peer 冲突。 | 每个合法和非法组合都有唯一结果；失败原子性和错误优先级明确。 |
 | RDMA 语义与范围 | 对照 `docs/contracts/libibverbs-alignment.md`，检查标准数值、术语和 UGDR 扩展决策；搜索 GID、LID、MTU、PSN、IP、port、IPC encoding 等越界承诺。 | 标准对齐项与扩展项均有追踪；不宣称网络建连、序列化或完整 verbs 支持。 |
 | 仓库验证 | `cmake --build build`；`ctest --test-dir build --output-on-failure`；`python3 tools/project_state.py validate --root .`；`python3 tools/check_project_docs.py --root .`；`git diff --check` | 全部通过；执行证据写入本步骤 progress 记录。 |
 

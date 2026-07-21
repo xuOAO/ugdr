@@ -154,7 +154,7 @@ int main() {
     const ugdr_qp_attr expected_attr = attr;
     errno = 127;
     if (ugdr_modify_qp(sentinel_pointer<ugdr_qp>(16), &attr,
-                       UGDR_QP_STATE | UGDR_QP_CUR_STATE | UGDR_QP_ACCESS_FLAGS) != EOPNOTSUPP ||
+                       UGDR_QP_STATE | UGDR_QP_CUR_STATE | UGDR_QP_ACCESS_FLAGS) != EINVAL ||
         errno != 127 || !unchanged(attr, expected_attr)) {
         return 14;
     }
@@ -162,24 +162,23 @@ int main() {
     ugdr_qp_init_attr query_init{recv_cq, send_cq, 23, 29, 7, 11, UGDR_QPT_RC, 0};
     const ugdr_qp_init_attr expected_query_init = query_init;
     errno = 131;
-    if (ugdr_query_qp(sentinel_pointer<ugdr_qp>(17), &attr, UGDR_QP_STATE, &query_init) !=
-            EOPNOTSUPP ||
+    if (ugdr_query_qp(sentinel_pointer<ugdr_qp>(17), &attr, UGDR_QP_STATE, &query_init) != EINVAL ||
         errno != 131 || !unchanged(attr, expected_attr) ||
         !unchanged(query_init, expected_query_init)) {
         return 15;
     }
 
-    ugdr_qp_conn_info info{31, UINT64_C(0x123456789abcdef0)};
+    ugdr_qp_conn_info info{31};
     const ugdr_qp_conn_info expected_info = info;
     errno = 137;
-    if (ugdr_query_qp_conn_info(sentinel_pointer<ugdr_qp>(18), &info) != EOPNOTSUPP ||
-        errno != 137 || !unchanged(info, expected_info)) {
+    if (ugdr_query_qp_conn_info(sentinel_pointer<ugdr_qp>(18), &info) != EINVAL || errno != 137 ||
+        !unchanged(info, expected_info)) {
         return 16;
     }
     constexpr int connect_mask =
         UGDR_QP_TIMEOUT | UGDR_QP_RETRY_CNT | UGDR_QP_RNR_RETRY | UGDR_QP_MIN_RNR_TIMER;
     errno = 139;
-    if (ugdr_connect_qp(sentinel_pointer<ugdr_qp>(19), &info, &attr, connect_mask) != EOPNOTSUPP ||
+    if (ugdr_connect_qp(sentinel_pointer<ugdr_qp>(19), &info, &attr, connect_mask) != EINVAL ||
         errno != 139 || !unchanged(info, expected_info) || !unchanged(attr, expected_attr)) {
         return 17;
     }

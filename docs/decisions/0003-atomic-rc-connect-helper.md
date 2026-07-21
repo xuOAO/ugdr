@@ -23,8 +23,9 @@ while exposing an intermediate RTR state across IPC would add no useful v1 capab
 Provide `ugdr_connect_qp` as a UGDR extension:
 
 - The local QP must start in INIT.
-- `ugdr_qp_conn_info` contains only a standard-style `qp_num` and an opaque, generation-safe
-  `endpoint_id`.
+- `ugdr_qp_conn_info` contains only a standard-style `qp_num`.
+- QPNs are nonzero and never reused or wrapped during one daemon process lifetime; a live-QPN
+  index provides same-daemon lookup across sessions.
 - The helper also takes `const ugdr_qp_attr *attr` and `int attr_mask`. It requires the standard
   timeout, retry-count, RNR-retry, and minimum-RNR-timer mask bits and stages those values with the
   peer binding and state transition.

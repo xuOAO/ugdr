@@ -4,13 +4,13 @@ source_token: "Jlk1dR0FloLvT7xdypscwfL0nKh"
 source_url: "https://my.feishu.cn/docx/Jlk1dR0FloLvT7xdypscwfL0nKh"
 source_path: "我的空间 / UGDR / UGDR_v1 设计 / UGDR_v1 版本文档"
 source_title: "UGDR_v1 版本文档"
-source_revision: 121
+source_revision: 130
 doc_type: "version"
 content_mode: "agent"
 review_status: "reviewed"
-synced_at: "2026-07-21T12:05:34+08:00"
+synced_at: "2026-07-21T20:16:30+08:00"
 generated_by: "ugdr-sync-docs-to-md"
-generated_body_sha256: "deff336725ee19e66bdc3dba3f1d75c781c6c57bad91092873faaaaaab8d17b4"
+generated_body_sha256: "d0f2b7d6819040523b2aef4958d7c9698d8e24926860e7e72276a6e0a9c9c394"
 ---
 # UGDR_v1 版本文档
 
@@ -18,7 +18,7 @@ generated_body_sha256: "deff336725ee19e66bdc3dba3f1d75c781c6c57bad91092873faaaaa
 
 UGDR v1 的目标是先建立可重复执行的项目初始化与开发 Harness，再在单机环境中验证软件 GPU Direct RDMA 的基础架构，并提供 RC QP 建连以及 rdma_write、rdma_write_with_imm 所必需的最小 verbs-like API。该版本通过两个 client 进程和一个 daemon 进程，跑通对象管理、QP 的 SQ/RQ、WR posting、CQ 与 WC、内部 datagram、本地 loop 数据路径以及真实 GPU buffer 拷贝；已支持子集的可观察行为默认对齐 RDMA/libibverbs。
 
-daemon 进程内同时承载 daemon 管理模块和 Loop Worker，但两者职责严格分离：管理模块只负责 client session、context/PD/MR/CQ/QP/endpoint 生命周期，以及 QP 的 SQ/RQ 与 send_cq/recv_cq 关联元数据；Loop Worker 只负责数据面工作。后续多机版本可以保留管理模块，并将 Loop Worker 替换或扩展为网络 transport 与协议处理模块。
+daemon 进程内同时承载 daemon 管理模块和 Loop Worker，但两者职责严格分离：管理模块只负责 client session、context/PD/MR/CQ/QP 生命周期，以及 QP 的 SQ/RQ 与 send_cq/recv_cq 关联元数据；Loop Worker 只负责数据面工作。后续多机版本可以保留管理模块，并将 Loop Worker 替换或扩展为网络 transport 与协议处理模块。
 
 版本完成的判断标准是：使用者可以通过 UGDR API 完成核心对象生命周期和 RC QP 连接管理，由 Client A 向 SQ post rdma_write 或 rdma_write_with_imm 的 Send WR，经过内部 datagram 封包、本地队列、解包、copy task meta queue 和持续运行的 GPU kernel，将数据正确写入 Client B 的真实 GPU buffer。GPU kernel 回传 completion meta 后，按 signaling 契约在 send_cq 关联 CQ 产生发送 WC；rdma_write_with_imm 还必须消费 Client B 在 RQ 预提交的 Receive WR，并在 recv_cq 关联 CQ 产生携带 immediate data 的接收 WC，普通 rdma_write 不产生该远端接收 WC。
 
@@ -35,7 +35,7 @@ UGDR v1 先解决一个更基础的问题：在不引入真实网络传输的情
 - 支持 RC 模式下的 rdma_write 和 rdma_write_with_imm；其他传输类型和操作语义不进入本版本范围。
 - rdma_write_with_imm 按标准接收语义处理：Client B 向 QP 的 Receive Queue（RQ）预提交 Receive WR；成功完成时目标 MR 已写入，消费一个 Receive WR，并在接收端 CQ 产生携带 immediate data 的 WC；缺少可消费 Receive WR 时产生 RNR 或等价错误。普通 rdma_write 不消费远端 Receive WR，也不产生远端接收 WC。具体 Receive WR 提交契约由 F02 确认，内部 WQE 表示由 F04 确认。
 - 使用两个独立 client 进程模拟通信双方，并使用一个 daemon 进程承载 daemon 管理模块和 loop worker。
-- daemon 管理模块负责 client session，以及 context、PD、MR、CQ、QP、endpoint 等控制面对象和元数据；QP 持有 SQ/RQ，并分别关联 send_cq 与 recv_cq，两者允许指向同一个 CQ。管理模块不负责数据传输。
+- daemon 管理模块负责 client session，以及 context、PD、MR、CQ、QP 等控制面对象和元数据；QP 持有 SQ/RQ，并分别关联 send_cq 与 recv_cq，两者允许指向同一个 CQ。管理模块不负责数据传输。
 - Loop Worker 从 QP 的 Send Queue（SQ）读取已提交的 Send WR（内部可表示为 WQE），封装为 UGDR 内部 datagram，写入本地 datagram queue，再从队列读出并解析头部，定位目标 MR 并提交 GPU 拷贝任务；不得直接从 WR 跳过封包和解包进入 memcpy。
 - 实现 QP 的 Send Queue（SQ）和 Receive Queue（RQ）以及 Completion Queue（CQ）的基础语义：向 SQ/RQ post Send/Receive WR，队列层消费 WR，并向 QP 关联的 send_cq/recv_cq 生成可轮询的 WC；send_cq 与 recv_cq 是关联角色，不是不同类型的 CQ。
 - 使用持续运行的 GPU kernel 处理真实 GPU buffer 拷贝。loop worker 通过 copy task meta queue 生产拷贝任务，GPU kernel 完成任务后通过 completion meta queue 将结果反馈给 loop worker。
@@ -63,7 +63,7 @@ UGDR v1 先解决一个更基础的问题：在不引入真实网络传输的情
 - RDMA 语义对齐原则：v1 只提供 RC QP 建连以及 rdma_write、rdma_write_with_imm 所必需的 verbs-like API；在已支持子集内，公开 API、对象关系、术语、QP 状态转换、错误、顺序、signaling 和 completion 语义默认对齐 RDMA/libibverbs。F02 确认具体 API，不宣称完整 ibverbs 兼容；daemon、队列或 GPU 架构导致的有意偏离必须在已审阅设计中显式记录并由专项测试覆盖。MR 注册保持 `ugdr_reg_mr(pd, addr, length, access)` 的 API/ABI 形状和公开 `lkey/rkey` 语义，但 v1 支持能力只覆盖 `cudaMalloc` device allocation 的合法区间；host、managed、CUDA array 与任意 VMM allocation 返回 `EOPNOTSUPP`，该内存类型限制属于版本能力边界。
 - WRITE_WITH_IMM 接收原则：接收端必须向 RQ 预提交可消费的 Receive WR；成功时消费一个 Receive WR，并在 recv_cq 关联的 CQ 中产生携带 immediate data 的 WC；缺少 Receive WR 时产生 RNR 或等价错误。普通 RDMA Write 不消费远端 Receive WR，也不产生远端接收 WC。是否允许零 SGE 等公开契约由 F02 确认，WQE 仅作为内部实现表示。
 - 进程原则：两个 client 分别运行在独立进程中；daemon 管理模块和 loop worker 运行在同一个 daemon 进程中，但保持清晰的逻辑边界。
-- 控制面原则：daemon 管理模块负责 IPC、连接、session，以及 context、PD、MR、CQ、QP、endpoint 等对象的句柄、元数据与生命周期；SQ/RQ 是 QP 的组成部分，send_cq/recv_cq 是 QP 到 CQ 的关联。控制面不实现真实队列行为，也不解析或搬运数据面 payload。
+- 控制面原则：daemon 管理模块负责 IPC、连接、session，以及 context、PD、MR、CQ、QP 等对象的句柄、元数据与生命周期；SQ/RQ 是 QP 的组成部分，send_cq/recv_cq 是 QP 到 CQ 的关联。控制面不实现真实队列行为，也不解析或搬运数据面 payload。
 - 数据面原则：F04 负责 SQ/RQ/CQ 的真实队列语义，包括 post WR、队列容量与顺序、WR 消费、WC 生成和 CQ polling；F05 的 Loop Worker 消费 SQ/RQ 中的 WR，并负责内部 datagram、本地 datagram queue、目标校验、GPU 拷贝任务编排以及 WC 生成条件。
 - GPU 协作原则：loop worker 是 copy task meta 的生产者和 completion meta 的消费者；持续运行的 GPU kernel 是 copy task meta 的消费者和 completion meta 的生产者。
 - 完成语义原则：UGDR v1 仅在 GPU kernel 已完成真实 GPU copy、并由 Loop Worker 收到成功 completion meta 后，才向相应 CQ 生成成功 WC（内部可表示为 CQE）；任务入队或 GPU copy 提交均不代表 verbs completion。失败结果必须产生可观察的错误 WC 或等价错误状态，不得报告成功。
@@ -78,7 +78,7 @@ UGDR v1 先解决一个更基础的问题：在不引入真实网络传输的情
 
 运行时架构之前存在一个开发前置层：F01 项目初始化与开发 Harness。该层负责仓库骨架、模块边界、仓库内文档与状态导航、Agent 可发现的工作流、统一命令入口和基础质量门禁，使人和新的 Agent 会话都能在不依赖聊天历史的情况下定位当前阶段、启动环境并验证修改。该层不属于 UGDR 运行时，因此不进入下方数据路径图。
 
-UGDR v1 的宏观架构由两个 client 进程和一个 daemon 进程组成。daemon 进程内部包含 daemon 管理模块和 Loop Worker：管理模块处理 IPC、连接、session，以及 context、PD、MR、CQ、QP、endpoint 等对象的元数据与生命周期；QP 包含 SQ/RQ，并通过 send_cq/recv_cq 关联 CQ。真实 SQ/RQ/CQ 行为由队列层提供，Loop Worker 消费 WR 并处理内部 datagram、本地 datagram queue、copy task meta、completion meta 和 WC 生成。两个模块同进程部署，但职责和接口边界保持分离。
+UGDR v1 的宏观架构由两个 client 进程和一个 daemon 进程组成。daemon 进程内部包含 daemon 管理模块和 Loop Worker：管理模块处理 IPC、连接、session，以及 context、PD、MR、CQ、QP 等对象的元数据与生命周期；QP 包含 SQ/RQ，并通过 send_cq/recv_cq 关联 CQ。真实 SQ/RQ/CQ 行为由队列层提供，Loop Worker 消费 WR 并处理内部 datagram、本地 datagram queue、copy task meta、completion meta 和 WC 生成。两个模块同进程部署，但职责和接口边界保持分离。
 
 数据路径从 Client A 的 post_send 开始。Send WR 进入 QP 的 SQ 后，Loop Worker 将其封装为 UGDR 内部 datagram 并写入本地 datagram queue；接收侧逻辑从队列读出 datagram、解析头部、通过 daemon 管理模块维护的元数据定位 Client B 的目标 MR。rdma_write_with_imm 还必须确认并消费 Client B 在 RQ 中预提交的 Receive WR，缺少 Receive WR 时产生 RNR 或等价错误；普通 rdma_write 不消费远端 Receive WR。Loop Worker 将 copy task meta 写入任务队列，持续运行的 GPU kernel 消费任务并执行真实 GPU buffer 拷贝，再将 completion meta 写回完成队列。Loop Worker 仅在消费到成功 completion meta 后向 Client A 的 send_cq 关联 CQ 生成发送 WC；对于 rdma_write_with_imm，同时向 Client B 的 recv_cq 关联 CQ 生成携带 immediate data 的接收 WC。
 
@@ -124,7 +124,7 @@ UGDR v1 采用以下功能划分。F02 只冻结公开 API 契约与对象模型
 |-|-|-|-|-|
 | F01 | 项目初始化与开发 Harness | 建立可编译仓库骨架、模块边界、项目文档与状态治理，以及 bootstrap、环境诊断、format/lint、build、test 和 smoke check 的稳定入口。 | 不实现 UGDR API、daemon 或数据路径功能；不在版本文档固定目录树、构建工具和状态 schema。 | 版本文档与本机环境 |
 | F02 | API 契约与对象模型 | 确认 v1 API 清单，定义参数与返回值、句柄、对象关系、QP 状态转换、错误、顺序、signaling 和 completion 契约；已支持子集默认对齐 RDMA/libibverbs。 | 不实现 API 运行时行为；不实现 IPC、daemon 对象注册、真实队列、datagram 或 GPU copy；不宣称完整 ibverbs 兼容。 | F01 |
-| F03 | Daemon 控制面与对象生命周期 | 实现 IPC/session，以及 context、PD、MR、CQ、QP、endpoint 等对象元数据的注册、创建、查询、合法状态转换和关闭；QP 持有 SQ/RQ，并通过 send_cq/recv_cq 关联 CQ。 | 只管理队列句柄、容量与关联元数据，不实现 SQ/RQ 的 WR 存储消费、CQ 的 WC 生成轮询或数据路径。 | F02 |
+| F03 | Daemon 控制面与对象生命周期 | 实现 IPC/session，以及 context、PD、MR、CQ、QP 等对象元数据的注册、创建、查询、合法状态转换和关闭；QP 持有 SQ/RQ，并通过 send_cq/recv_cq 关联 CQ。 | 只管理队列句柄、容量与关联元数据，不实现 SQ/RQ 的 WR 存储消费、CQ 的 WC 生成轮询或数据路径。 | F02 |
 | F04 | SQ/RQ/CQ 队列系统 | 实现向 QP 的 SQ/RQ post Send/Receive WR、队列容量与顺序、WR 消费，以及向关联 CQ 生成和轮询 WC 的语义；send_cq 与 recv_cq 可指向同一或不同 CQ。以 Mock Loop Worker 消费 WR 并生成可验证的 Mock WC。 | WQE/CQE 仅作为内部表示；不实现真实 datagram、目标 MR 定位、Loop Worker 数据路径或 GPU copy。 | F03 |
 | F05 | Loop Worker 与本地 Datagram 数据路径 | 消费真实 SQ/RQ 中的 WR，定义内部 datagram 的封包、入队、出队与解包，完成目标校验、Mock copy task/completion 串联，并在满足 verbs 完成条件时生成 WC。 | GPU 执行仍使用 Mock backend；不实现真实 persistent kernel，也不引入多机网络传输。 | F04 |
 | F06 | Persistent GPU Kernel 与真实 GPU Copy | 实现 copy task/completion meta 队列、persistent GPU kernel 和真实 GPU buffer copy，与 F05 数据路径集成并替换 Mock GPU backend。 | 不扩展多机传输，不重新定义公开 API、控制面、SQ/RQ/CQ 或 datagram 契约。 | F05 |
@@ -146,7 +146,7 @@ flowchart LR
 
 - F01 在干净 workspace 中能够通过统一入口完成 bootstrap 或环境诊断，并执行 format/lint、基础 build、test 和 smoke check；仓库骨架、模块边界、项目地图、状态与进度载体均可机械验证。
 - F02 明确 v1 最小 API 清单与对象模型，覆盖 RC QP 建连、rdma_write、rdma_write_with_imm 所需的参数与返回值、句柄、对象关系、QP 状态转换、错误、顺序、signaling 和 completion 契约；已支持子集通过对照 RDMA/libibverbs 的契约测试验证，但不要求 API 具备运行时功能。
-- F03 的 client 能够通过 IPC 注册并管理 session、context、PD、MR、CQ、QP、endpoint 等对象元数据，完成创建、查询、合法 QP 状态转换和关闭；QP 持有 SQ/RQ，并可将 send_cq/recv_cq 关联到同一或不同 CQ。此阶段不以真实 WR 提交、WC 生成或数据传输作为验收条件。
+- F03 的 client 能够通过 IPC 注册并管理 session、context、PD、MR、CQ、QP 等对象元数据，完成创建、查询、合法 QP 状态转换和关闭；QP 持有 SQ/RQ，并可将 send_cq/recv_cq 关联到同一或不同 CQ。此阶段不以真实 WR 提交、WC 生成或数据传输作为验收条件。
 - F04 实现 SQ/RQ/CQ 的真实队列语义：向 SQ/RQ post Send/Receive WR，验证容量、顺序、消费与队列满行为，并向 QP 关联的 CQ 生成和轮询 WC；Mock Loop Worker 能够消费 WR 并生成可重复验证的 Mock WC。
 - F05 的 Loop Worker 能够消费真实 SQ/RQ 中的 WR，完成内部 datagram 的封包、入队、出队、解包、目标校验和 WC 生成；GPU 执行使用 Mock backend。rdma_write_with_imm 缺少 Receive WR 时产生 RNR 或等价错误，普通 rdma_write 不消费远端 Receive WR。
 - F05 对无效 rkey、越界长度、失效 MR、错误 QP 状态和其他必要错误路径不得报告成功 WC，也不得修改错误目标；失败必须通过符合已支持 verbs 契约的错误 WC（内部可表示为 CQE）或等价错误状态观察。
@@ -182,3 +182,4 @@ flowchart LR
 | 2026-07-20 | 修正 F02-F07 职责：F02 仅定义 API 契约；F03 实现控制面与对象生命周期；F04 实现真实 SQ/RQ/CQ 并以 Mock Worker 验证；F05 实现 Loop Worker/Datagram 并以 Mock GPU 验证；F06 接入真实 persistent GPU kernel；F07 从公开 API 端到端验收。依赖调整为严格线性。 | 避免把强依赖下游能力的 API 运行时实现错误归入 F02，并消除原 F05 与 F06 的循环依赖。 | 约束与原则、整体架构、功能划分、DAG、验收和风险；需重新人工审阅。 |
 | 2026-07-20 | 新增 RDMA/libibverbs 语义对齐约束；统一 QP/SQ/RQ/CQ、WR/WC 术语，明确 WQE/CQE 仅为内部表示；修正 QP 与 CQ 关系、Write/Write With Immediate、signaling 和 completion 语义。 | 避免以内部队列术语替代公开 verbs 契约，确保 daemon 与 GPU 实现不改变已支持 RDMA API 的可观察行为。 | 版本范围、约束与原则、整体架构、F02-F07 职责、验收标准、风险项和架构/依赖画板；需重新人工审阅。 |
 | 2026-07-21 | 新增 v1 MR memory-kind 能力约束：公开注册 API/ABI 与 `lkey/rkey` 语义保持不变，只支持 `cudaMalloc` device allocation 合法区间；host、managed、CUDA array 与任意 VMM allocation 返回 `EOPNOTSUPP`。 | daemon 通过 CUDA IPC 打开 Client GPU allocation；host memory 不在 v1 引入第二套共享映射机制。 | 版本约束、F02 契约同步与 F03 MR 实现依据；需重新人工审阅。 |
+| 2026-07-21 | 删除公开 `endpoint_id` 和 endpoint 控制对象；连接信息仅保留 daemon 生命周期内不复用的 `qp_num`。 | 本机 loop worker 是过渡阶段，不让本地寻址辅助字段进入公开 ABI 或约束未来多机连接协议。 | F02-S03 契约、F03 功能与 F03-S05 实现设计；需重新人工审阅。 |

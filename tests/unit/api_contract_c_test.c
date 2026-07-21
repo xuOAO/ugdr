@@ -12,7 +12,7 @@ int main(void) {
     int num_devices = 17;
     struct ugdr_qp_init_attr init_attr = {0};
     struct ugdr_qp_attr attr = {0};
-    struct ugdr_qp_conn_info info = {23, UINT64_C(0x123456789abcdef0)};
+    struct ugdr_qp_conn_info info = {23};
     struct ugdr_mr mr = {0};
     struct ugdr_sge sge = {0};
     struct ugdr_send_wr send_wr = {0};
@@ -72,10 +72,10 @@ int main(void) {
     }
     errno = 0;
     if (ugdr_create_qp(0, &init_attr) != 0 || errno != EINVAL || ugdr_destroy_qp(0) != EINVAL ||
-        ugdr_modify_qp(0, &attr, UGDR_QP_STATE) != EOPNOTSUPP ||
-        ugdr_query_qp(0, &attr, UGDR_QP_STATE, &init_attr) != EOPNOTSUPP ||
-        ugdr_query_qp_conn_info(0, &info) != EOPNOTSUPP ||
-        ugdr_connect_qp(0, &info, &attr, UGDR_QP_TIMEOUT) != EOPNOTSUPP) {
+        ugdr_modify_qp(0, &attr, UGDR_QP_STATE) != EINVAL ||
+        ugdr_query_qp(0, &attr, UGDR_QP_STATE, &init_attr) != EINVAL ||
+        ugdr_query_qp_conn_info(0, &info) != EINVAL ||
+        ugdr_connect_qp(0, &info, &attr, UGDR_QP_TIMEOUT) != EINVAL) {
         return 9;
     }
     if (ugdr_post_send(0, &send_wr, &bad_send) != EOPNOTSUPP ||

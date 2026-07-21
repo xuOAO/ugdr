@@ -3,8 +3,8 @@
   "reviewed_sources": [
     {
       "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
-      "revision": 49,
-      "body_sha256": "897ed2532c789ff0be09761a4f2f9dfe6ff9388382704f6f8fdc4053de5e2e6e"
+      "revision": 65,
+      "body_sha256": "edbd40c76daf5874174113ca6668313382b13b36f82830b6d03e9f400433c9d0"
     }
   ],
   "routes": [
@@ -59,7 +59,7 @@
         "F03": [
           {
             "step": "F03-S05",
-            "action": "QP 查询、状态转换、endpoint 与原子建连"
+            "action": "QP 查询、状态转换与原子建连"
           }
         ]
       }
