@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "reviewed_sources": [
+    {
+      "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "revision": 49,
+      "body_sha256": "897ed2532c789ff0be09761a4f2f9dfe6ff9388382704f6f8fdc4053de5e2e6e"
+    }
+  ],
+  "routes": [
+    {
+      "version": "v1",
+      "feature": "F03",
+      "step": "F03-S01",
+      "source": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "next_actions": {
+        "F03": [
+          {
+            "step": "F03-S02",
+            "action": "类型化 generation handle 注册表与 Context"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F03",
+      "step": "F03-S02",
+      "source": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "next_actions": {
+        "F03": [
+          {
+            "step": "F03-S03",
+            "action": "PD/MR/CQ 元数据与严格生命周期"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F03",
+      "step": "F03-S03",
+      "source": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "next_actions": {
+        "F03": [
+          {
+            "step": "F03-S04",
+            "action": "QP/SQ/RQ 所有权与 CQ 关联"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F03",
+      "step": "F03-S04",
+      "source": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "next_actions": {
+        "F03": [
+          {
+            "step": "F03-S05",
+            "action": "QP 查询、状态转换、endpoint 与原子建连"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F03",
+      "step": "F03-S05",
+      "source": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "next_actions": {
+        "F03": [
+          {
+            "step": "F03-S06",
+            "action": "公开 API 集成与控制面验收"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F03",
+      "step": "F03-S06",
+      "source": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03_Daemon_控制面与对象生命周期_功能文档.md",
+      "next_actions": {}
+    }
+  ]
+}

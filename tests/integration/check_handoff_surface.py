@@ -29,6 +29,7 @@ def main() -> int:
     parser.add_argument("--agents", type=Path, required=True)
     parser.add_argument("--index", type=Path, required=True)
     parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--roadmap", type=Path, required=True)
     args = parser.parse_args()
 
     errors = []
@@ -36,11 +37,13 @@ def main() -> int:
         agents = args.agents.read_text(encoding="utf-8")
         index = args.index.read_text(encoding="utf-8")
         state = json.loads(args.state.read_text(encoding="utf-8"))
+        roadmap = json.loads(args.roadmap.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         fail([str(error)])
 
     for value in (
         "docs/status/current.json",
+        "docs/status/roadmap.json",
         "docs/v1_docs/README.md",
         "python3 tools/project_state.py validate --root .",
     ):
@@ -61,6 +64,10 @@ def main() -> int:
         errors.append("next_actions is not machine-readable")
     if isinstance(state, dict) and not isinstance(state.get("blockers"), list):
         errors.append("blockers is not machine-readable")
+    if not isinstance(roadmap, dict) or not isinstance(roadmap.get("routes"), list):
+        errors.append("reviewed roadmap routes are not machine-readable")
+    elif not isinstance(roadmap.get("reviewed_sources"), list):
+        errors.append("reviewed roadmap sources are not machine-readable")
 
     if errors:
         fail(errors)

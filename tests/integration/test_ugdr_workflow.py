@@ -30,13 +30,19 @@ from ugdr_cli.workflow import (  # noqa: E402
 
 
 def state_value(state="awaiting_review", next_actions=None, blockers=None):
+    if next_actions is None:
+        next_actions = (
+            {"F01": [{"step": "F01-S06", "action": "验收"}]}
+            if state == "completed"
+            else {}
+        )
     return {
         "schema_version": 1,
         "version": "v1",
         "feature": "F01",
         "step": "F01-S05",
         "state": state,
-        "next_actions": {} if next_actions is None else next_actions,
+        "next_actions": next_actions,
         "blockers": ([] if state != "blocked" else ["external approval"])
         if blockers is None
         else blockers,
@@ -63,6 +69,18 @@ class WorkflowFixture:
             REPOSITORY_ROOT / "tools/project_state.py",
             self.root / "tools/project_state.py",
         )
+        shutil.copyfile(
+            REPOSITORY_ROOT / "tools/project_roadmap.py",
+            self.root / "tools/project_roadmap.py",
+        )
+        source = self.root / "docs/v1_docs/roadmap.md"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            "---\nreview_status: reviewed\nsource_revision: 1\n"
+            "generated_body_sha256: {}\n---\n# Roadmap\n".format("b" * 64),
+            encoding="utf-8",
+        )
+        self.write_roadmap({"F01": [{"step": "F01-S06", "action": "验收"}]})
         self.write_state(state_value())
         return self
 
@@ -76,6 +94,43 @@ class WorkflowFixture:
 
     def read_state(self):
         return json.loads((self.root / "docs/status/current.json").read_text(encoding="utf-8"))
+
+    def write_roadmap(self, next_actions):
+        source = "docs/v1_docs/roadmap.md"
+        routes = [
+            {
+                "version": "v1",
+                "feature": "F01",
+                "step": "F01-S05",
+                "source": source,
+                "next_actions": next_actions,
+            }
+        ]
+        targets = {
+            action if isinstance(action, str) else action["step"]
+            for actions in next_actions.values()
+            for action in actions
+        }
+        routes.extend(
+            {
+                "version": "v1",
+                "feature": step.split("-", 1)[0],
+                "step": step,
+                "source": source,
+                "next_actions": {},
+            }
+            for step in sorted(targets)
+        )
+        value = {
+            "schema_version": 1,
+            "reviewed_sources": [
+                {"path": source, "revision": 1, "body_sha256": "b" * 64}
+            ],
+            "routes": routes,
+        }
+        (self.root / "docs/status/roadmap.json").write_text(
+            json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
 
 class RecordingRunner:
@@ -139,6 +194,7 @@ class WorkflowDecisionTests(unittest.TestCase):
         )
         with WorkflowFixture() as fixture:
             for next_actions, action, requires_human in cases:
+                fixture.write_roadmap(next_actions)
                 fixture.write_state(state_value("completed", next_actions))
                 payload, exit_code = state_next(fixture.root)
                 with self.subTest(action=action):
@@ -196,8 +252,6 @@ class WorkflowDecisionTests(unittest.TestCase):
                     {"F01": [{"step": "F01-S06", "action": "验收"}]},
                 )
             )
-            next_actions = fixture.root / "next.json"
-            next_actions.write_text("{}\n", encoding="utf-8")
             payload, exit_code = run_state_core(
                 fixture.root,
                 "advance-scope",
@@ -212,8 +266,6 @@ class WorkflowDecisionTests(unittest.TestCase):
                     "F01",
                     "--step",
                     "F01-S06",
-                    "--next-actions-file",
-                    "next.json",
                     "--human-confirmed",
                 ],
             )

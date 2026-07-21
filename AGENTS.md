@@ -3,6 +3,7 @@
 ## Repository Map
 
 - `docs/status/current.json`: machine-readable current scope, stable state, next actions, and blockers.
+- `docs/status/roadmap.json`: reviewed-source-bound machine roadmap from which `next_actions` are derived.
 - `docs/v1_docs/README.md`: index of reviewed design snapshots used for implementation.
 - `docs/contracts/`: reviewed Client-visible API and behavioral contracts.
 - `docs/decisions/`: durable decision records that do not belong in current state.
@@ -15,7 +16,8 @@
 ## Project Rules
 
 - Feishu documents are the decision and review source. Repository Markdown files are reviewed implementation snapshots.
-- Update `docs/status/current.json` only through `python3 tools/project_state.py transition`; do not edit it by hand.
+- Update `docs/status/current.json` only through `project_state.py transition`, `advance-scope`, or `reconcile-roadmap`; do not edit it by hand.
+- Derive `next_actions` only from the validated roadmap; do not supply, clear, or infer them from chat or prose.
 - Never infer human review, implementation confirmation, or acceptance from passing tests, commits, or prior chat context.
 - Keep `tools/module-boundaries.json` and the generated section in `docs/architecture/repository-skeleton.md` synchronized when the skeleton changes.
 - Keep durable decisions, current state, progress records, and temporary plans in their dedicated locations.

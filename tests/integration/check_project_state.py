@@ -42,7 +42,11 @@ def state_value(state: str) -> dict:
         "feature": "F01",
         "step": "F01-S02",
         "state": state,
-        "next_actions": {"F01": ["F01-S02", "F01-S03"]},
+        "next_actions": (
+            {"F01": [{"step": "F01-S03", "action": "Next reviewed step"}]}
+            if state == "completed"
+            else {}
+        ),
         "blockers": ["external dependency"] if state == "blocked" else [],
         "updated_at": "2026-07-19T20:00:00+08:00",
         "updated_by": "agent",
@@ -52,6 +56,34 @@ def state_value(state: str) -> dict:
 def write_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def roadmap_value() -> dict:
+    source = "docs/v1_docs/roadmap.md"
+    return {
+        "schema_version": 1,
+        "reviewed_sources": [
+            {"path": source, "revision": 1, "body_sha256": "a" * 64}
+        ],
+        "routes": [
+            {
+                "version": "v1",
+                "feature": "F01",
+                "step": "F01-S02",
+                "source": source,
+                "next_actions": {
+                    "F01": [{"step": "F01-S03", "action": "Next reviewed step"}]
+                },
+            },
+            {
+                "version": "v1",
+                "feature": "F01",
+                "step": "F01-S03",
+                "source": source,
+                "next_actions": {},
+            },
+        ],
+    }
 
 
 def assert_unchanged(path: Path, before: bytes, message: str) -> None:
@@ -72,9 +104,17 @@ def main() -> int:
         state_path = root / "docs/status/current.json"
         schema_path = root / "docs/status/current.schema.json"
         reviewed_path = root / "docs/reviewed.md"
+        roadmap_source = root / "docs/v1_docs/roadmap.md"
         schema_path.parent.mkdir(parents=True)
         shutil.copyfile(str(args.schema), str(schema_path))
         shutil.copyfile(str(args.reviewed_doc), str(reviewed_path))
+        roadmap_source.parent.mkdir(parents=True)
+        roadmap_source.write_text(
+            "---\nreview_status: reviewed\nsource_revision: 1\n"
+            "generated_body_sha256: {}\n---\n# Roadmap\n".format("a" * 64),
+            encoding="utf-8",
+        )
+        write_json(root / "docs/status/roadmap.json", roadmap_value())
 
         write_json(state_path, state_value("awaiting_review"))
         process = run(args.python, args.script, root, "validate")
@@ -199,6 +239,27 @@ def main() -> int:
             "--human-confirmed",
         )
         expect_code(process, 0, "human-confirmed completion was rejected")
+        completed_state = json.loads(state_path.read_text(encoding="utf-8"))
+        if completed_state["next_actions"] != roadmap_value()["routes"][0]["next_actions"]:
+            fail("completion did not derive next_actions from the reviewed roadmap")
+
+        completed_state["next_actions"] = {}
+        write_json(state_path, completed_state)
+        process = run(args.python, args.script, root, "validate")
+        expect_code(process, 1, "completed state drift from roadmap was accepted")
+        process = run(
+            args.python,
+            args.script,
+            root,
+            "reconcile-roadmap",
+            "--updated-by",
+            "agent",
+        )
+        expect_code(process, 0, "roadmap reconciliation was rejected")
+        reconciled = json.loads(state_path.read_text(encoding="utf-8"))
+        if reconciled["next_actions"] != roadmap_value()["routes"][0]["next_actions"]:
+            fail("roadmap reconciliation did not repair next_actions")
+
         before = state_path.read_bytes()
         process = run(
             args.python,
@@ -230,7 +291,6 @@ def main() -> int:
             "F01",
             "--step",
             "F01-S03",
-            "--clear-next-actions",
             "--verification-passed",
             "--human-confirmed",
         )
@@ -252,7 +312,6 @@ def main() -> int:
             "F01",
             "--step",
             "F01-S02",
-            "--clear-next-actions",
             "--verification-passed",
             "--human-confirmed",
         )
@@ -274,11 +333,30 @@ def main() -> int:
             "F01",
             "--step",
             "F01-S03",
-            "--clear-next-actions",
             "--human-confirmed",
         )
         expect_code(process, 3, "scope advancement bypassed verification")
         assert_unchanged(state_path, before, "unverified scope advancement modified current.json")
+
+        process = run(
+            args.python,
+            args.script,
+            root,
+            "advance-scope",
+            "--to",
+            "awaiting_review",
+            "--updated-by",
+            "human",
+            "--version",
+            "v1",
+            "--feature",
+            "F01",
+            "--step",
+            "F01-S04",
+            "--human-confirmed",
+        )
+        expect_code(process, 3, "scope outside reviewed next_actions was accepted")
+        assert_unchanged(state_path, before, "unreviewed scope advancement modified current.json")
 
         inode_before = state_path.stat().st_ino
         process = run(
@@ -296,7 +374,6 @@ def main() -> int:
             "F01",
             "--step",
             "F01-S03",
-            "--clear-next-actions",
             "--verification-passed",
             "--human-confirmed",
         )
@@ -368,23 +445,48 @@ def main() -> int:
         if recovered["blockers"]:
             fail("blocked recovery did not clear blockers")
 
-        bad_actions_path = root / "bad-actions.json"
-        write_json(bad_actions_path, {"F01": ["F02-S01"]})
+        bad_roadmap = roadmap_value()
+        bad_roadmap["routes"][0]["next_actions"] = {"F01": ["F02-S01"]}
+        write_json(root / "docs/status/roadmap.json", bad_roadmap)
         before = state_path.read_bytes()
         process = run(
             args.python,
             args.script,
             root,
-            "transition",
-            "--to",
-            "awaiting_review",
-            "--updated-by",
-            "agent",
-            "--next-actions-file",
-            "bad-actions.json",
+            "validate",
         )
-        expect_code(process, 3, "invalid next_actions was accepted")
-        assert_unchanged(state_path, before, "invalid next_actions modified current.json")
+        expect_code(process, 1, "invalid roadmap next_actions was accepted")
+        assert_unchanged(state_path, before, "invalid roadmap modified current.json")
+        if "$roadmap.routes[0].next_actions.F01[0]" not in process.stderr:
+            fail("invalid roadmap diagnostic omitted the field path", process)
+
+        stale_roadmap = roadmap_value()
+        stale_roadmap["reviewed_sources"][0]["revision"] = 2
+        write_json(root / "docs/status/roadmap.json", stale_roadmap)
+        process = run(args.python, args.script, root, "validate")
+        expect_code(process, 1, "stale reviewed source revision was accepted")
+        if "does not match source_revision" not in process.stderr:
+            fail("stale source diagnostic omitted the revision mismatch", process)
+
+        missing_route = roadmap_value()
+        missing_route["routes"].pop()
+        write_json(root / "docs/status/roadmap.json", missing_route)
+        process = run(args.python, args.script, root, "validate")
+        expect_code(process, 1, "roadmap action without a target route was accepted")
+        if "next action has no roadmap route" not in process.stderr:
+            fail("missing route diagnostic was omitted", process)
+
+        cyclic_roadmap = roadmap_value()
+        cyclic_roadmap["routes"][1]["next_actions"] = {
+            "F01": [{"step": "F01-S02", "action": "Back edge"}]
+        }
+        write_json(root / "docs/status/roadmap.json", cyclic_roadmap)
+        process = run(args.python, args.script, root, "validate")
+        expect_code(process, 1, "cyclic roadmap was accepted")
+        if "roadmap contains a cycle" not in process.stderr:
+            fail("cycle diagnostic was omitted", process)
+
+        write_json(root / "docs/status/roadmap.json", roadmap_value())
 
         invalid = state_value("ready_for_implementation")
         invalid["next_actions"] = {"F01": ["F02-S01"]}

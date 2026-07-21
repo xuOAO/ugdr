@@ -41,6 +41,29 @@
       ]
     },
     "next_actions": {
+      "$ref": "#/$defs/next_actions"
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_by": {
+      "enum": [
+        "human",
+        "agent"
+      ]
+    }
+  },
+  "$defs": {
+    "next_actions": {
       "type": "object",
       "patternProperties": {
         "^F[0-9]{2}$": {
@@ -78,24 +101,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "blockers": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "uniqueItems": true
-    },
-    "updated_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "updated_by": {
-      "enum": [
-        "human",
-        "agent"
-      ]
     }
   }
 }
