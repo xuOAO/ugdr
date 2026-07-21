@@ -171,7 +171,6 @@ struct ugdr_qp_attr {
 
 struct ugdr_qp_conn_info {
     uint32_t qp_num;
-    uint64_t endpoint_id;
 };
 
 ugdr_device **ugdr_get_device_list(int *num_devices) UGDR_NOEXCEPT;

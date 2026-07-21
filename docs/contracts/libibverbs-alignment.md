@@ -29,7 +29,7 @@ Status meanings:
 | `ugdr_comp_channel` | `ibv_comp_channel` | unsupported | The opaque name preserves `create_cq` signature alignment; v1 has no completion-event API. |
 | `ugdr_qp_init_attr`, `ugdr_qp_attr` | `ibv_qp_init_attr`, `ibv_qp_attr` | subset adaptation | Creation capacities are flattened and unsupported fields are omitted. QP attributes expose state/current-state/access plus the standard `uint8_t` timeout/retry fields needed by the v1 connection helper; this is not the complete verbs record. |
 | `ugdr_qp_attr_mask` | `ibv_qp_attr_mask` | subset adaptation | Exposed bits align exactly: state 0, current-state 1, access 3, timeout 9, retry count 10, RNR retry 11, and minimum RNR timer 15. Other mask bits are outside v1. |
-| `ugdr_qp_conn_info` | No single verbs record | UGDR extension | Contains `qp_num` plus a generation-safe same-daemon `endpoint_id`. It is neither an address-vector record nor a serialized wire format. |
+| `ugdr_qp_conn_info` | No single verbs record | UGDR extension | Contains only a same-daemon `qp_num`. It is neither an address-vector record nor a serialized wire format. |
 | `ugdr_sge`, `ugdr_recv_wr` | Corresponding `ibv_*` record | aligned | SGE and Receive WR match their complete standard shape. |
 | `ugdr_send_wr` | `ibv_send_wr` | subset adaptation | The standard relevant prefix, anonymous `imm_data`, and `wr.rdma` nesting are preserved. Unions for unsupported opcodes and QP types are omitted. |
 | `ugdr_wc` | `ibv_wc` | subset adaptation | The standard relevant base shape and anonymous `imm_data` access are preserved. The unsupported invalidated-rkey union member is omitted; v1-inapplicable success fields are zero. |
@@ -58,7 +58,7 @@ Status meanings:
 | `ugdr_poll_cq` | `ibv_poll_cq` | aligned | Uses the standard negative error domain and never writes `wc` on the placeholder path. |
 | `ugdr_create_qp`, `ugdr_destroy_qp` | `ibv_create_qp`, `ibv_destroy_qp` | subset adaptation | Implemented RC-only creation uses a flattened init record. A QP owns SQ/RQ metadata, references each distinct CQ once, and shares one Context with its PD and CQs. Destroy removes those relationships and creates no completion. |
 | `ugdr_modify_qp`, `ugdr_query_qp` | `ibv_modify_qp`, `ibv_query_qp` | subset adaptation | Uses the standard direct errno return domain and aligned exposed mask bits, but only the reviewed state/access/retry subset is public. Invalid requests fail without changing state or outputs. |
-| `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Application exchange plus `ibv_modify_qp` transitions | UGDR extension | Query returns `qp_num` and `endpoint_id`. Connect takes a const attribute record and requires timeout/retry/RNR/minimum-RNR masks before atomically staging INIT to RTR to RTS; it never advances the remote QP. |
+| `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Application exchange plus `ibv_modify_qp` transitions | UGDR extension | Query returns `qp_num`. Connect takes a const attribute record and requires timeout/retry/RNR/minimum-RNR masks before atomically staging INIT to RTR to RTS; it never advances the remote QP. |
 | `ugdr_post_send`, `ugdr_post_recv` | `ibv_post_send`, `ibv_post_recv` | aligned | For the supported WR subset, return domain, linked-list prefix acceptance, `bad_wr`, SQ/RQ ordering, descriptor lifetime, and capacity failure behavior follow verbs. |
 
 ## Lifecycle alignment and strict guarantees
@@ -93,7 +93,7 @@ The strict guarantees are recorded in [Decision 0002](../decisions/0002-strict-o
 |-|-|-|
 | QP creation starts in RESET | aligned | A successful runtime create produces a live RC QP in `UGDR_QPS_RESET`. |
 | RESET to INIT | aligned | `ugdr_modify_qp` requires state and access masks, exact Remote Write access, and an optional matching current-state guard. |
-| INIT to RTR to RTS | UGDR extension | `ugdr_connect_qp` applies the standard state sequence as one atomic same-daemon commit using generation-safe peer identity. |
+| INIT to RTR to RTS | UGDR extension | `ugdr_connect_qp` applies the standard state sequence as one atomic same-daemon commit using a daemon-lifetime-unique live QPN. |
 | Enter ERR | aligned | RESET, INIT, RTR, and RTS can enter ERR; every incomplete SQ/RQ WR receives a flush WC. |
 | Failure atomicity | UGDR strict guarantee | Invalid transitions, stale endpoints, and peer conflicts do not expose partial state, peer binding, output writes, or remote changes. |
 | SQD/SQE state values | unsupported | Numeric values are retained for alignment, but transition requests return `EOPNOTSUPP`. |

@@ -64,6 +64,22 @@ template <typename Record, ObjectType Type> class GenerationRegistry {
         return const_cast<GenerationRegistry *>(this)->resolve(owner_session, identity);
     }
 
+    Record *resolve_any(std::uint64_t identity) noexcept {
+        const auto parts = decode_object_identity(identity);
+        if (!parts.has_value() || parts->type != Type || parts->slot >= slots_.size()) {
+            return nullptr;
+        }
+        Slot &slot = slots_[parts->slot];
+        if (slot.retired || !slot.value.has_value() || slot.generation != parts->generation) {
+            return nullptr;
+        }
+        return &*slot.value;
+    }
+
+    const Record *resolve_any(std::uint64_t identity) const noexcept {
+        return const_cast<GenerationRegistry *>(this)->resolve_any(identity);
+    }
+
     int erase(OwnerSessionId owner_session, std::uint64_t identity) noexcept {
         const auto parts = decode_object_identity(identity);
         if (!parts.has_value() || resolve(owner_session, identity) == nullptr) {

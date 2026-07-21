@@ -25,6 +25,10 @@ enum class ControlMethod : std::uint32_t {
     destroy_cq = 9,
     create_qp = 10,
     destroy_qp = 11,
+    query_qp = 12,
+    modify_qp = 13,
+    query_qp_conn_info = 14,
+    connect_qp = 15,
 };
 
 struct DeviceDescriptor {

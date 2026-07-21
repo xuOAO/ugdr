@@ -492,6 +492,132 @@ class ClientRuntime {
         return destroy_status;
     }
 
+    int modify_qp(ugdr_qp *qp, const ugdr_qp_attr *attr, int attr_mask) {
+        std::lock_guard lock(mutex_);
+        if (qps_.find(qp) == qps_.end() || !qp->live || attr == nullptr || attr_mask < 0) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        if (qp->connection_epoch != client_.connection_epoch()) {
+            qp->live = false;
+            return EINVAL;
+        }
+        ugdr::control::QpAttributes attributes;
+        attributes.state = static_cast<std::uint32_t>(attr->qp_state);
+        attributes.current_state = static_cast<std::uint32_t>(attr->cur_qp_state);
+        attributes.access_flags = static_cast<std::uint32_t>(attr->qp_access_flags);
+        attributes.timeout = attr->timeout;
+        attributes.retry_count = attr->retry_cnt;
+        attributes.rnr_retry = attr->rnr_retry;
+        attributes.min_rnr_timer = attr->min_rnr_timer;
+        return ugdr::control::client_modify_qp(client_, qp->daemon_identity, attributes,
+                                               static_cast<std::uint32_t>(attr_mask));
+    }
+
+    int query_qp(ugdr_qp *qp, ugdr_qp_attr *attr, int attr_mask, ugdr_qp_init_attr *init_attr) {
+        std::lock_guard lock(mutex_);
+        if (qps_.find(qp) == qps_.end() || !qp->live || attr == nullptr || init_attr == nullptr ||
+            attr_mask < 0) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        if (qp->connection_epoch != client_.connection_epoch()) {
+            qp->live = false;
+            return EINVAL;
+        }
+        ugdr::control::QpSnapshot snapshot;
+        const int status = ugdr::control::client_query_qp(
+            client_, qp->daemon_identity, static_cast<std::uint32_t>(attr_mask), &snapshot);
+        if (status != 0) {
+            return status;
+        }
+        ugdr_qp_attr result = *attr;
+        const auto mask = static_cast<std::uint32_t>(attr_mask);
+        if ((mask & ugdr::control::kQpMaskState) != 0) {
+            result.qp_state = static_cast<ugdr_qp_state>(snapshot.attributes.state);
+        }
+        if ((mask & ugdr::control::kQpMaskCurrentState) != 0) {
+            result.cur_qp_state = static_cast<ugdr_qp_state>(snapshot.attributes.current_state);
+        }
+        if ((mask & ugdr::control::kQpMaskAccess) != 0) {
+            result.qp_access_flags = static_cast<int>(snapshot.attributes.access_flags);
+        }
+        if ((mask & ugdr::control::kQpMaskTimeout) != 0) {
+            result.timeout = snapshot.attributes.timeout;
+        }
+        if ((mask & ugdr::control::kQpMaskRetryCount) != 0) {
+            result.retry_cnt = snapshot.attributes.retry_count;
+        }
+        if ((mask & ugdr::control::kQpMaskRnrRetry) != 0) {
+            result.rnr_retry = snapshot.attributes.rnr_retry;
+        }
+        if ((mask & ugdr::control::kQpMaskMinRnrTimer) != 0) {
+            result.min_rnr_timer = snapshot.attributes.min_rnr_timer;
+        }
+        ugdr_qp_init_attr creation = qp->init_attr;
+        creation.max_send_wr = snapshot.creation.max_send_wr;
+        creation.max_recv_wr = snapshot.creation.max_recv_wr;
+        creation.max_send_sge = snapshot.creation.max_send_sge;
+        creation.max_recv_sge = snapshot.creation.max_recv_sge;
+        creation.qp_type = static_cast<ugdr_qp_type>(snapshot.creation.qp_type);
+        creation.sq_sig_all = static_cast<int>(snapshot.creation.sq_sig_all);
+        *attr = result;
+        *init_attr = creation;
+        return 0;
+    }
+
+    int query_qp_conn_info(ugdr_qp *qp, ugdr_qp_conn_info *info) {
+        std::lock_guard lock(mutex_);
+        if (qps_.find(qp) == qps_.end() || !qp->live || info == nullptr) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        if (qp->connection_epoch != client_.connection_epoch()) {
+            qp->live = false;
+            return EINVAL;
+        }
+        std::uint32_t qp_num = 0;
+        const int status =
+            ugdr::control::client_query_qp_conn_info(client_, qp->daemon_identity, &qp_num);
+        if (status == 0) {
+            info->qp_num = qp_num;
+        }
+        return status;
+    }
+
+    int connect_qp(ugdr_qp *qp, const ugdr_qp_conn_info *remote_info, const ugdr_qp_attr *attr,
+                   int attr_mask) {
+        std::lock_guard lock(mutex_);
+        if (qps_.find(qp) == qps_.end() || !qp->live || remote_info == nullptr || attr == nullptr ||
+            attr_mask < 0 || remote_info->qp_num == 0) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        if (qp->connection_epoch != client_.connection_epoch()) {
+            qp->live = false;
+            return EINVAL;
+        }
+        ugdr::control::QpAttributes attributes;
+        attributes.timeout = attr->timeout;
+        attributes.retry_count = attr->retry_cnt;
+        attributes.rnr_retry = attr->rnr_retry;
+        attributes.min_rnr_timer = attr->min_rnr_timer;
+        return ugdr::control::client_connect_qp(client_, qp->daemon_identity, remote_info->qp_num,
+                                                attributes, static_cast<std::uint32_t>(attr_mask));
+    }
+
   private:
     int ensure_connected() {
         if (client_.connected()) {
@@ -649,20 +775,38 @@ int ugdr_destroy_qp(ugdr_qp *qp) noexcept {
     }
 }
 
-int ugdr_modify_qp(ugdr_qp *, ugdr_qp_attr *, int) noexcept {
-    return kUnsupported;
+int ugdr_modify_qp(ugdr_qp *qp, ugdr_qp_attr *attr, int attr_mask) noexcept {
+    try {
+        return runtime().modify_qp(qp, attr, attr_mask);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
-int ugdr_query_qp(ugdr_qp *, ugdr_qp_attr *, int, ugdr_qp_init_attr *) noexcept {
-    return kUnsupported;
+int ugdr_query_qp(ugdr_qp *qp, ugdr_qp_attr *attr, int attr_mask,
+                  ugdr_qp_init_attr *init_attr) noexcept {
+    try {
+        return runtime().query_qp(qp, attr, attr_mask, init_attr);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
-int ugdr_query_qp_conn_info(ugdr_qp *, ugdr_qp_conn_info *) noexcept {
-    return kUnsupported;
+int ugdr_query_qp_conn_info(ugdr_qp *qp, ugdr_qp_conn_info *info) noexcept {
+    try {
+        return runtime().query_qp_conn_info(qp, info);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
-int ugdr_connect_qp(ugdr_qp *, const ugdr_qp_conn_info *, const ugdr_qp_attr *, int) noexcept {
-    return kUnsupported;
+int ugdr_connect_qp(ugdr_qp *qp, const ugdr_qp_conn_info *remote_info, const ugdr_qp_attr *attr,
+                    int attr_mask) noexcept {
+    try {
+        return runtime().connect_qp(qp, remote_info, attr, attr_mask);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
 int ugdr_post_send(ugdr_qp *, ugdr_send_wr *, ugdr_send_wr **) noexcept {

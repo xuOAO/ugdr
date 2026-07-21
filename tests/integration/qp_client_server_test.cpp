@@ -56,12 +56,12 @@ int child_main(const std::string &socket_path, int ready_fd) {
     if (::write(ready_fd, &ready, 1) != 1) {
         return 21;
     }
-    for (int iteration = 0; iteration < 500 && service.request_count < 17; ++iteration) {
+    for (int iteration = 0; iteration < 500 && service.request_count < 26; ++iteration) {
         if (server.poll_once(50) != 0) {
             return 22;
         }
     }
-    return service.request_count == 17 && service.service.qp_count() == 0 &&
+    return service.request_count == 26 && service.service.qp_count() == 0 &&
                    service.service.cq_count() == 0 && service.service.pd_count() == 0 &&
                    service.service.context_count() == 0
                ? 0
@@ -141,11 +141,41 @@ int main() {
     ugdr_qp_init_attr split = init_attributes(send_cq, recv_cq);
     const ugdr_qp_init_attr expected_split = split;
     ugdr_qp *const split_qp = ugdr_create_qp(pd, &split);
+    ugdr_qp_init_attr peer_init = init_attributes(send_cq, recv_cq);
+    ugdr_qp *const peer_qp = ugdr_create_qp(pd, &peer_init);
+    ugdr_qp_conn_info info{};
+    ugdr_qp_attr queried{};
+    ugdr_qp_init_attr queried_init{};
+    ugdr_qp_attr init{};
+    init.qp_state = UGDR_QPS_INIT;
+    init.cur_qp_state = UGDR_QPS_RESET;
+    init.qp_access_flags = UGDR_ACCESS_REMOTE_WRITE;
+    ugdr_qp_attr retry{};
+    retry.timeout = 17;
+    retry.retry_cnt = 3;
+    retry.rnr_retry = 7;
+    retry.min_rnr_timer = 19;
+    constexpr int query_mask = UGDR_QP_STATE | UGDR_QP_CUR_STATE | UGDR_QP_ACCESS_FLAGS;
+    constexpr int connect_mask =
+        UGDR_QP_TIMEOUT | UGDR_QP_RETRY_CNT | UGDR_QP_RNR_RETRY | UGDR_QP_MIN_RNR_TIMER;
     if (split_qp == nullptr || std::memcmp(&split, &expected_split, sizeof(split)) != 0 ||
         ugdr_destroy_cq(send_cq) != EBUSY || ugdr_destroy_cq(recv_cq) != EBUSY ||
-        ugdr_modify_qp(split_qp, nullptr, 0) != EOPNOTSUPP ||
-        ugdr_query_qp_conn_info(split_qp, nullptr) != EOPNOTSUPP ||
-        ugdr_destroy_qp(split_qp) != 0) {
+        peer_qp == nullptr || ugdr_query_qp_conn_info(peer_qp, &info) != 0 || info.qp_num == 0 ||
+        ugdr_query_qp(split_qp, &queried, query_mask, &queried_init) != 0 ||
+        queried.qp_state != UGDR_QPS_RESET || queried.cur_qp_state != UGDR_QPS_RESET ||
+        queried_init.send_cq != send_cq || queried_init.recv_cq != recv_cq ||
+        ugdr_modify_qp(split_qp, &init, UGDR_QP_STATE | UGDR_QP_CUR_STATE | UGDR_QP_ACCESS_FLAGS) !=
+            0 ||
+        ugdr_modify_qp(peer_qp, &init, UGDR_QP_STATE | UGDR_QP_CUR_STATE | UGDR_QP_ACCESS_FLAGS) !=
+            0 ||
+        ugdr_connect_qp(split_qp, &info, &retry, connect_mask) != 0 ||
+        ugdr_query_qp(split_qp, &queried, query_mask | connect_mask, &queried_init) != 0 ||
+        queried.qp_state != UGDR_QPS_RTS || queried.retry_cnt != retry.retry_cnt ||
+        queried.rnr_retry != retry.rnr_retry || queried.timeout != retry.timeout ||
+        queried.min_rnr_timer != retry.min_rnr_timer ||
+        ugdr_query_qp(peer_qp, &queried, query_mask, &queried_init) != 0 ||
+        queried.qp_state != UGDR_QPS_INIT || ugdr_destroy_qp(split_qp) != 0 ||
+        ugdr_destroy_qp(peer_qp) != 0) {
         return 10;
     }
     if (ugdr_destroy_cq(send_cq) != 0 || ugdr_destroy_cq(recv_cq) != 0 ||

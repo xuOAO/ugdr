@@ -24,7 +24,7 @@ destruction without changing that public ABI.
 | Optional CQ event channel | `ugdr_comp_channel` | Opaque signature-alignment type. Event channels are unsupported in v1; callers pass null and use completion vector 0. |
 | QP creation attributes | `ugdr_qp_init_attr` | Complete C-compatible record: send/receive CQ, SQ/RQ WR capacities, Send/Receive SGE maxima, RC type, and `sq_sig_all`. No SRQ or inline-data field. |
 | QP state attributes | `ugdr_qp_attr`, `ugdr_qp_attr_mask` | Subset-adapted state/current-state/access/retry record. Supported mask bits 0, 1, 3, 9, 10, 11, and 15 use libibverbs values. |
-| QP connection identity | `ugdr_qp_conn_info` | Complete same-daemon record containing `uint32_t qp_num` and generation-safe `uint64_t endpoint_id`; not a serialized network record. |
+| QP connection identity | `ugdr_qp_conn_info` | Same-daemon record containing only nonzero `uint32_t qp_num`; not a serialized network record. |
 | Work requests | `ugdr_sge`, `ugdr_send_wr`, `ugdr_recv_wr` | Complete v1 records. SGE and Receive WR match the standard shape; Send WR preserves the standard relevant prefix, anonymous `imm_data`, and `wr.rdma` access path while omitting unsupported opcode unions. |
 | Completion | `ugdr_wc` | Standard relevant base WC shape with unsupported invalidated-rkey access omitted; non-success validity, production, ordering, and polling rules are fixed by the [WR/WC contract](wr-wc-semantics.md). |
 | QP type | `ugdr_qp_type` | RC only; `UGDR_QPT_RC` is numerically aligned with `IBV_QPT_RC`. |
@@ -40,7 +40,7 @@ destruction without changing that public ABI.
 `max_recv_wr`, `max_send_sge`, `max_recv_sge`, `qp_type`, and `sq_sig_all`.
 `ugdr_qp_attr` fixes `qp_state`, `cur_qp_state`, `qp_access_flags`, `timeout`, `retry_cnt`,
 `rnr_retry`, and `min_rnr_timer`.
-`ugdr_qp_conn_info` fixes `qp_num` followed by `endpoint_id`.
+`ugdr_qp_conn_info` contains only `qp_num`.
 
 The normal v1 path is RESET to INIT through `ugdr_modify_qp`, followed by the UGDR
 `ugdr_connect_qp` helper's atomic INIT to RTR to RTS staging and commit. RESET, INIT, RTR, and RTS
@@ -68,8 +68,8 @@ connection, and data-path entry points retain their reviewed placeholders.
 | PD | `ugdr_alloc_pd`, `ugdr_dealloc_pd` | Allocate creates a Context child. Deallocate returns 0 only when no MR exists; live children return `EBUSY`, while invalid, stale, or repeated handles return `EINVAL`. |
 | MR | `ugdr_reg_mr`, `ugdr_dereg_mr` | Register accepts a nonempty range inside a `cudaMalloc` device allocation, returns the Client address snapshot and direct nonzero `lkey`/`rkey`, and reports pointer failures through `errno`. Remote Write requires Local Write. Host, managed, array, VMM, or otherwise unsupported memory returns `EOPNOTSUPP`; malformed ranges and access return `EINVAL`. Deregister closes the daemon IPC mapping before invalidating the handle and keys. |
 | CQ | `ugdr_create_cq`, `ugdr_destroy_cq`, `ugdr_poll_cq` | Create requires `cqe > 0`, null channel, and completion vector 0. Destroy enforces strict references. Poll on a live CQ remains `-EOPNOTSUPP` and does not write `wc`; invalid CQ handles return `-EINVAL`. |
-| QP | `ugdr_create_qp`, `ugdr_destroy_qp`, `ugdr_modify_qp`, `ugdr_query_qp` | Create requires a live PD, live send/receive CQs in the same Context, nonzero WR/SGE capacities, RC type, and `sq_sig_all` 0 or 1. It preserves the caller's init record and returns a live RESET QP or null with `errno`. Destroy removes the QP's single PD ownership relation and one reference per distinct CQ; invalid or repeated handles return `EINVAL`. Modify and query remain `EOPNOTSUPP` and do not change inputs or outputs. |
-| Connection extension | `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Return `EOPNOTSUPP`; query does not write connection information, and connect does not modify the remote record or retry attributes. |
+| QP | `ugdr_create_qp`, `ugdr_destroy_qp`, `ugdr_modify_qp`, `ugdr_query_qp` | Create returns a RESET RC QP with a daemon-lifetime-unique QPN. Modify supports RESET→INIT and RESET/INIT/RTR/RTS→ERR. Query returns one state/access/retry snapshot plus creation attributes. Failures preserve state and outputs. |
+| Connection extension | `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Query returns the local QPN. Connect resolves a live same-daemon remote QPN and atomically commits the local peer, retry fields, and RTS state; it never modifies the remote QP. |
 | WR posting | `ugdr_post_send`, `ugdr_post_recv` | Return `EOPNOTSUPP`; do not consume any WR and do not change `bad_wr`. |
 
 Except for pointer-returning functions, `ugdr_close_device`, the negative error domain of

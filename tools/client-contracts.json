@@ -38,7 +38,7 @@
     },
     {
       "path": "docs/v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md",
-      "revision": 7
+      "revision": 19
     },
     {
       "path": "docs/v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md",
@@ -51,6 +51,10 @@
     {
       "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md",
       "revision": 7
+    },
+    {
+      "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03-S05_QP_查询、状态转换与原子建连_步骤文档.md",
+      "revision": 13
     }
   ],
   "required_contracts": [

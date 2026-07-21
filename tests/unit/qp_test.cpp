@@ -190,18 +190,98 @@ int main() {
         return 16;
     }
 
+    auto local_cq = service.handle(session, decoded(ugdr::control::make_create_cq_request(
+                                                context.response.object_identity, 13)));
+    auto local_qp =
+        service.handle(session, decoded(ugdr::control::make_create_qp_request(
+                                    pd_identity, attributes(local_cq.response.object_identity,
+                                                            local_cq.response.object_identity))));
+    constexpr ugdr::ipc::SessionId remote_session = 42;
+    auto remote_context =
+        service.handle(remote_session, decoded(ugdr::control::make_create_context_request(1)));
+    auto remote_pd = service.handle(remote_session, decoded(ugdr::control::make_create_pd_request(
+                                                        remote_context.response.object_identity)));
+    auto remote_cq =
+        service.handle(remote_session, decoded(ugdr::control::make_create_cq_request(
+                                           remote_context.response.object_identity, 14)));
+    auto remote_qp = service.handle(
+        remote_session,
+        decoded(ugdr::control::make_create_qp_request(
+            remote_pd.response.object_identity,
+            attributes(remote_cq.response.object_identity, remote_cq.response.object_identity))));
+    if (local_cq.response.status != 0 || local_qp.response.status != 0 ||
+        remote_context.response.status != 0 || remote_pd.response.status != 0 ||
+        remote_cq.response.status != 0 || remote_qp.response.status != 0) {
+        return 17;
+    }
+    ugdr::control::QpAttributes init;
+    init.state = ugdr::control::kQpStateInit;
+    init.current_state = ugdr::control::kQpStateReset;
+    init.access_flags = ugdr::control::kQpAccessRemoteWrite;
+    constexpr std::uint32_t init_mask = ugdr::control::kQpMaskState |
+                                        ugdr::control::kQpMaskCurrentState |
+                                        ugdr::control::kQpMaskAccess;
+    if (service.handle(session, decoded(ugdr::control::make_modify_qp_request(
+                                    local_qp.response.object_identity, init, init_mask)))
+                .response.status != 0 ||
+        service.handle(remote_session, decoded(ugdr::control::make_modify_qp_request(
+                                           remote_qp.response.object_identity, init, init_mask)))
+                .response.status != 0) {
+        return 18;
+    }
+    ugdr::control::QpAttributes retry;
+    retry.timeout = 17;
+    retry.retry_count = 3;
+    retry.rnr_retry = 7;
+    retry.min_rnr_timer = 19;
+    // QPNs 1 and 2 belonged to the destroyed QPs above, so these live QPs are 3 and 4.
+    if (service.handle(session, decoded(ugdr::control::make_connect_qp_request(
+                                    local_qp.response.object_identity, 4, retry,
+                                    ugdr::control::kQpConnectMask)))
+                .response.status != 0 ||
+        service.handle(session, decoded(ugdr::control::make_connect_qp_request(
+                                    local_qp.response.object_identity, 4, retry,
+                                    ugdr::control::kQpConnectMask)))
+                .response.status != EINVAL) {
+        return 19;
+    }
+    if (service
+            .handle(remote_session, decoded(ugdr::control::make_destroy_qp_request(
+                                        remote_qp.response.object_identity)))
+            .response.status != 0) {
+        return 20;
+    }
+    auto second_local =
+        service.handle(session, decoded(ugdr::control::make_create_qp_request(
+                                    pd_identity, attributes(local_cq.response.object_identity,
+                                                            local_cq.response.object_identity))));
+    if (second_local.response.status != 0 ||
+        service.handle(session, decoded(ugdr::control::make_modify_qp_request(
+                                    second_local.response.object_identity, init, init_mask)))
+                .response.status != 0 ||
+        service.handle(session, decoded(ugdr::control::make_connect_qp_request(
+                                    second_local.response.object_identity, 4, retry,
+                                    ugdr::control::kQpConnectMask)))
+                .response.status != ENOENT) {
+        return 21;
+    }
+    service.on_disconnect(remote_session);
+    if (service.qp_count() != 2) {
+        return 22;
+    }
+
     auto final_cq = service.handle(session, decoded(ugdr::control::make_create_cq_request(
                                                 context.response.object_identity, 12)));
     auto final_qp =
         service.handle(session, decoded(ugdr::control::make_create_qp_request(
                                     pd_identity, attributes(final_cq.response.object_identity,
                                                             final_cq.response.object_identity))));
-    if (final_cq.response.status != 0 || final_qp.response.status != 0 || service.qp_count() != 1) {
-        return 17;
+    if (final_cq.response.status != 0 || final_qp.response.status != 0 || service.qp_count() != 3) {
+        return 23;
     }
     service.on_disconnect(session);
     return service.qp_count() == 0 && service.cq_count() == 0 && service.pd_count() == 0 &&
                    service.context_count() == 0
                ? 0
-               : 18;
+               : 24;
 }
