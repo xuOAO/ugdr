@@ -4,11 +4,12 @@ Sources:
 
 - [reviewed F02-S03 revision 7](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
+- [reviewed F03-S04 revision 7](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
 
 This contract fixes the Client-visible v1 RC QP creation attributes, query records, connection
-identity, legal state changes, failure results, and atomic connection helper. F02 still provides
-linkable placeholders only: no operation in this document implies that daemon objects, IPC, queues,
-or data movement are implemented.
+identity, legal state changes, failure results, and atomic connection helper. F03-S04 implements
+creation, destruction, and ownership metadata only; later sections do not imply that state changes,
+connection identities, real queues, or data movement are already implemented.
 
 ## Public records and mask
 
@@ -61,10 +62,11 @@ pointers, cross-Context relationships, or invalid fields return null with `errno
 no partial object. Provider resource limits and any capacity adjustment are deferred to the runtime
 implementation and are not simulated by F02.
 
-A successfully created QP starts in `UGDR_QPS_RESET` and has both identity fields. `qp_num` is
-Client-visible and may follow the daemon's allocation policy. `endpoint_id`, not `qp_num` alone, is
-the generation-safe resolution key: after destruction, stale connection information must never
-resolve to a newly allocated QP that reused a number.
+A successfully created QP starts in `UGDR_QPS_RESET`. F03-S04 keeps that state internal; F03-S05
+adds the queryable connection identity. `qp_num` is Client-visible and may follow the daemon's
+allocation policy. `endpoint_id`, not `qp_num` alone, is the generation-safe resolution key: after
+destruction, stale connection information must never resolve to a newly allocated QP that reused a
+number.
 
 Connection information is exchanged only between Clients in the same daemon control domain. It is
 an in-memory public record, not a network or persistent wire format; this contract defines no byte
@@ -154,17 +156,19 @@ idempotent: after the first success the local QP is RTS, so the repeated call re
 All failures are atomic. They preserve the local state, existing peer binding, remote QP, and caller
 outputs.
 
-## F02 placeholder and runtime boundary
+## Current runtime boundary
 
-F02 defines records and contracts but retains the existing linkable placeholder results:
+F03-S04 activates the reviewed creation and destruction subset:
 
-- `ugdr_create_qp` returns null and sets `errno=EOPNOTSUPP` without modifying init attributes.
+- `ugdr_create_qp` validates the PD, CQs, Context relationship, capacities, RC type, and
+  `sq_sig_all`, preserves the init attributes, and creates no partial QP on failure.
+- `ugdr_destroy_qp` removes the QP's PD ownership and CQ references; invalid, stale, or repeated
+  handles return `EINVAL`.
 - `ugdr_modify_qp`, `ugdr_query_qp`, `ugdr_query_qp_conn_info`, and the four-argument
   `ugdr_connect_qp` return `EOPNOTSUPP`.
 - Query placeholders do not write `ugdr_qp_attr`, `ugdr_qp_init_attr`, or
   `ugdr_qp_conn_info`.
 
-Runtime handle validation, endpoint registration, IPC, control-plane storage, SQ/RQ allocation, WR
-processing, completion production, and ERR-flush execution are not implemented in F02. Their
-Client-visible results are fixed by F02-S04 and later runtime features must implement them without
-expanding the public surface.
+Endpoint registration, real SQ/RQ allocation, WR processing, completion production, and ERR-flush
+execution are not implemented by F03-S04. Their Client-visible results are already fixed, and later
+runtime features must implement them without expanding the public surface.

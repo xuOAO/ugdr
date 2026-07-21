@@ -16,6 +16,7 @@ Lifecycle source:
 RC QP source:
 
 - [F02-S03 RC QP 建连与状态机契约](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md), Feishu revision 7.
+- [F03-S04 QP、SQ、RQ 所有权与 CQ 关联](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md), Feishu revision 7.
 
 WR/WC source:
 
@@ -27,7 +28,7 @@ Integration and validation source:
 
 Current contracts:
 
-- [Public API](public-api.md): v1 symbol surface and placeholder failure rules.
+- [Public API](public-api.md): v1 symbol surface and current implementation boundaries.
 - [libibverbs alignment](libibverbs-alignment.md): mapping, support status, and intentional
   differences.
 - [Object lifecycle](object-lifecycle.md): ownership, references, strict child-first destruction,

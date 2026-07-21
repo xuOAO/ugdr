@@ -141,12 +141,12 @@ int main() {
     ugdr_qp_init_attr init_attr{send_cq, recv_cq, 17, 19, 3, 5, UGDR_QPT_RC, 1};
     const ugdr_qp_init_attr expected_init_attr = init_attr;
     errno = 0;
-    if (ugdr_create_qp(sentinel_pointer<ugdr_pd>(14), &init_attr) != nullptr ||
-        errno != EOPNOTSUPP || !unchanged(init_attr, expected_init_attr)) {
+    if (ugdr_create_qp(sentinel_pointer<ugdr_pd>(14), &init_attr) != nullptr || errno != EINVAL ||
+        !unchanged(init_attr, expected_init_attr)) {
         return 12;
     }
     errno = 113;
-    if (ugdr_destroy_qp(sentinel_pointer<ugdr_qp>(15)) != EOPNOTSUPP || errno != 113) {
+    if (ugdr_destroy_qp(sentinel_pointer<ugdr_qp>(15)) != EINVAL || errno != 113) {
         return 13;
     }
 

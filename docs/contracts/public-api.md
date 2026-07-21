@@ -7,11 +7,13 @@ Sources:
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
 - [reviewed F03-S02 revision 11](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S02_类型化_generation_handle_注册表与_Context_步骤文档.md)
 - [reviewed F03-S03 revision 13](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md)
+- [reviewed F03-S04 revision 7](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
 
 `include/ugdr/api.hpp` exposes C-linkage `ugdr_*` symbols and C-compatible declarations. F02-S01
 freezes the symbol and type names needed by the v1 Client; F02-S03 defines the initial public QP
 records; F02-S04 completes the MR, SGE, WR, WC, retry-attribute, and completion surface. F03-S03
-implements PD, CUDA-backed MR, and CQ control lifecycles without changing that public ABI.
+implements PD, CUDA-backed MR, and CQ control lifecycles, and F03-S04 implements QP creation and
+destruction without changing that public ABI.
 
 ## Types
 
@@ -55,9 +57,9 @@ listed in [WR/WC and Completion Semantics](wr-wc-semantics.md). In particular, C
 
 ## Functions and current results
 
-All functions remain linkable. F03-S03 implements Device, Context, PD, CUDA-backed MR, and CQ
-control lifecycles through the daemon; QP and data-path entry points retain their reviewed
-placeholders.
+All functions remain linkable. F03-S04 adds QP creation and destruction to the Device, Context, PD,
+CUDA-backed MR, and CQ control lifecycles already implemented through the daemon. QP state,
+connection, and data-path entry points retain their reviewed placeholders.
 
 | Function group | Public functions | Current result |
 |-|-|-|
@@ -66,7 +68,7 @@ placeholders.
 | PD | `ugdr_alloc_pd`, `ugdr_dealloc_pd` | Allocate creates a Context child. Deallocate returns 0 only when no MR exists; live children return `EBUSY`, while invalid, stale, or repeated handles return `EINVAL`. |
 | MR | `ugdr_reg_mr`, `ugdr_dereg_mr` | Register accepts a nonempty range inside a `cudaMalloc` device allocation, returns the Client address snapshot and direct nonzero `lkey`/`rkey`, and reports pointer failures through `errno`. Remote Write requires Local Write. Host, managed, array, VMM, or otherwise unsupported memory returns `EOPNOTSUPP`; malformed ranges and access return `EINVAL`. Deregister closes the daemon IPC mapping before invalidating the handle and keys. |
 | CQ | `ugdr_create_cq`, `ugdr_destroy_cq`, `ugdr_poll_cq` | Create requires `cqe > 0`, null channel, and completion vector 0. Destroy enforces strict references. Poll on a live CQ remains `-EOPNOTSUPP` and does not write `wc`; invalid CQ handles return `-EINVAL`. |
-| QP | `ugdr_create_qp`, `ugdr_destroy_qp`, `ugdr_modify_qp`, `ugdr_query_qp` | Create returns null and sets `errno=EOPNOTSUPP`; the integer operations return `EOPNOTSUPP` and do not change inputs or outputs. |
+| QP | `ugdr_create_qp`, `ugdr_destroy_qp`, `ugdr_modify_qp`, `ugdr_query_qp` | Create requires a live PD, live send/receive CQs in the same Context, nonzero WR/SGE capacities, RC type, and `sq_sig_all` 0 or 1. It preserves the caller's init record and returns a live RESET QP or null with `errno`. Destroy removes the QP's single PD ownership relation and one reference per distinct CQ; invalid or repeated handles return `EINVAL`. Modify and query remain `EOPNOTSUPP` and do not change inputs or outputs. |
 | Connection extension | `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Return `EOPNOTSUPP`; query does not write connection information, and connect does not modify the remote record or retry attributes. |
 | WR posting | `ugdr_post_send`, `ugdr_post_recv` | Return `EOPNOTSUPP`; do not consume any WR and do not change `bad_wr`. |
 
@@ -76,7 +78,7 @@ their corresponding libibverbs APIs do.
 
 ## Explicit non-capabilities
 
-F03-S03 establishes CUDA IPC mappings and key lookup metadata but does not accept WRs, produce WCs,
-run a worker, or move application payloads. QP creation, queue storage, QP transitions, endpoint
-resolution, WR consumption, WC production, and network transport remain placeholders until their
-owning reviewed steps.
+F03-S04 stores SQ/RQ capacities as QP-owned metadata but does not allocate queue storage, accept
+WRs, produce WCs, run a worker, or move application payloads. QP transitions, endpoint resolution,
+WR consumption, WC production, and network transport remain placeholders until their owning
+reviewed steps.

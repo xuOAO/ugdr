@@ -69,7 +69,7 @@ struct CqRecord {
     std::size_t qp_references = 0;
 };
 
-class PdMrCqService final : public DeviceContextService {
+class PdMrCqService : public DeviceContextService {
   public:
     explicit PdMrCqService(gpu::CudaIpcMemoryBackend &memory_backend);
     PdMrCqService(DeviceCatalog catalog, gpu::CudaIpcMemoryBackend &memory_backend);
@@ -87,6 +87,12 @@ class PdMrCqService final : public DeviceContextService {
     [[nodiscard]] std::size_t pd_count() const noexcept;
     [[nodiscard]] std::size_t mr_count() const noexcept;
     [[nodiscard]] std::size_t cq_count() const noexcept;
+
+  protected:
+    PdRecord *resolve_pd(ipc::SessionId session_id, std::uint64_t identity) noexcept;
+    const PdRecord *resolve_pd(ipc::SessionId session_id, std::uint64_t identity) const noexcept;
+    CqRecord *resolve_cq(ipc::SessionId session_id, std::uint64_t identity) noexcept;
+    const CqRecord *resolve_cq(ipc::SessionId session_id, std::uint64_t identity) const noexcept;
 
   private:
     ControlServiceResult handle_create_pd(ipc::SessionId session_id,

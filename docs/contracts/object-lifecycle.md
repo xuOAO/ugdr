@@ -5,6 +5,7 @@ Sources:
 - [reviewed F02-S02 revision 17](../v1_docs/F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md)
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
 - [reviewed F03-S03 revision 13](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md)
+- [reviewed F03-S04 revision 7](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
 
 This contract fixes the Client-visible ownership, reference, handle-lifetime, and failure behavior
 for the v1 object subset. It does not prescribe daemon storage, reference-count implementation, IPC
@@ -67,7 +68,7 @@ the caller may release blockers and retry.
 | Null handle, wrong object type, stale handle, or repeated destroy | Returns `EINVAL`. `ugdr_close_device` returns `-1` and sets `errno=EINVAL`. | None |
 | QP creation receives a PD, `send_cq`, and `recv_cq` that do not belong to one Context | Returns null and sets `errno=EINVAL`. | No partial QP and no new relationship |
 | Parent or CQ still has a Client-visible dependency | Reports `EBUSY` in the corresponding function's standard return domain. | None; the original handle remains valid |
-| Resource type is not yet implemented beyond PD/MR/CQ | The corresponding QP or data-path public entry point reports `EOPNOTSUPP`. | No fake handle, partial object, or successful placeholder state |
+| Operation is not yet implemented beyond QP lifecycle metadata | The corresponding state, connection, or data-path public entry point reports `EOPNOTSUPP`. | No partial state or successful placeholder result |
 
 The daemon may use registries, generations, reference counts, or another internal technique to meet
 these results. Those mechanisms are not Client-visible contract.

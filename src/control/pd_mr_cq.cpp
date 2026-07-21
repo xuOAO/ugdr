@@ -587,6 +587,24 @@ std::size_t PdMrCqService::cq_count() const noexcept {
     return cqs_.size();
 }
 
+PdRecord *PdMrCqService::resolve_pd(ipc::SessionId session_id, std::uint64_t identity) noexcept {
+    return pds_.resolve(session_id, identity);
+}
+
+const PdRecord *PdMrCqService::resolve_pd(ipc::SessionId session_id,
+                                          std::uint64_t identity) const noexcept {
+    return pds_.resolve(session_id, identity);
+}
+
+CqRecord *PdMrCqService::resolve_cq(ipc::SessionId session_id, std::uint64_t identity) noexcept {
+    return cqs_.resolve(session_id, identity);
+}
+
+const CqRecord *PdMrCqService::resolve_cq(ipc::SessionId session_id,
+                                          std::uint64_t identity) const noexcept {
+    return cqs_.resolve(session_id, identity);
+}
+
 int client_create_pd(ControlClient &client, std::uint64_t context_identity,
                      std::uint64_t *pd_identity) {
     return context_identity == 0 ? EINVAL

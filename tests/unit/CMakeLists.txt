@@ -67,6 +67,18 @@ add_test(
     COMMAND ugdr_pd_mr_cq_test
 )
 
+add_executable(ugdr_qp_test
+    qp_test.cpp
+)
+target_link_libraries(ugdr_qp_test
+    PRIVATE
+        ugdr_control
+)
+add_test(
+    NAME ugdr_qp
+    COMMAND ugdr_qp_test
+)
+
 add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )

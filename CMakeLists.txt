@@ -44,6 +44,7 @@ add_library(ugdr_control STATIC
     src/control/ipc_adapter.cpp
     src/control/object_identity.cpp
     src/control/pd_mr_cq.cpp
+    src/control/qp.cpp
 )
 target_include_directories(ugdr_control
     PUBLIC
