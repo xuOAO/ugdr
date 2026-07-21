@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "version": "v1",
-  "feature": "F02",
-  "step": "F02-S05",
-  "state": "completed",
+  "feature": "F03",
+  "step": "F03-S01",
+  "state": "ready_for_implementation",
   "next_actions": {},
   "blockers": [],
-  "updated_at": "2026-07-21T09:46:35+08:00",
+  "updated_at": "2026-07-21T13:07:29+08:00",
   "updated_by": "human"
 }
