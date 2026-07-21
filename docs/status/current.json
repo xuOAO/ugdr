@@ -2,17 +2,10 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F03",
-  "step": "F03-S05",
-  "state": "completed",
-  "next_actions": {
-    "F03": [
-      {
-        "step": "F03-S06",
-        "action": "公开 API 集成与控制面验收"
-      }
-    ]
-  },
+  "step": "F03-S06",
+  "state": "ready_for_implementation",
+  "next_actions": {},
   "blockers": [],
-  "updated_at": "2026-07-21T20:36:57+08:00",
+  "updated_at": "2026-07-21T21:12:04+08:00",
   "updated_by": "human"
 }

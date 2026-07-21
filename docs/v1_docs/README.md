@@ -22,3 +22,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F03-S03 PD、MR、CQ 元数据与严格生命周期](F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md)
 - [F03-S04 QP、SQ、RQ 所有权与 CQ 关联](F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
 - [F03-S05 QP 查询、状态转换与原子建连](F03_Daemon_控制面与对象生命周期/F03-S05_QP_查询、状态转换与原子建连_步骤文档.md)
+- [F03-S06 公开 API 集成与控制面验收](F03_Daemon_控制面与对象生命周期/F03-S06_公开_API_集成与控制面验收_步骤文档.md)
