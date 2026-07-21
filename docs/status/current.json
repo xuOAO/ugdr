@@ -3,9 +3,16 @@
   "version": "v1",
   "feature": "F03",
   "step": "F03-S04",
-  "state": "awaiting_acceptance",
-  "next_actions": {},
+  "state": "completed",
+  "next_actions": {
+    "F03": [
+      {
+        "step": "F03-S05",
+        "action": "QP 查询、状态转换、endpoint 与原子建连"
+      }
+    ]
+  },
   "blockers": [],
-  "updated_at": "2026-07-21T19:23:23+08:00",
-  "updated_by": "agent"
+  "updated_at": "2026-07-21T19:43:25+08:00",
+  "updated_by": "human"
 }
