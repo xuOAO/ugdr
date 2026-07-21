@@ -3,9 +3,16 @@
   "version": "v1",
   "feature": "F03",
   "step": "F03-S05",
-  "state": "awaiting_acceptance",
-  "next_actions": {},
+  "state": "completed",
+  "next_actions": {
+    "F03": [
+      {
+        "step": "F03-S06",
+        "action": "公开 API 集成与控制面验收"
+      }
+    ]
+  },
   "blockers": [],
-  "updated_at": "2026-07-21T20:31:38+08:00",
-  "updated_by": "agent"
+  "updated_at": "2026-07-21T20:36:57+08:00",
+  "updated_by": "human"
 }
