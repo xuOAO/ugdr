@@ -15,3 +15,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F02-S02 对象模型与生命周期契约](F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md)
 - [F02-S03 RC QP 建连与状态机契约](F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
 - [F02-S04 WR/WC 与完成语义契约](F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
+- [F02-S05 契约集成、占位入口与验证 Harness](F02_API_契约与对象模型/F02-S05_契约集成、占位入口与验证_Harness_步骤文档.md)
