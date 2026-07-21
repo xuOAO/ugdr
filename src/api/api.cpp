@@ -2,6 +2,7 @@
 
 #include "control/device_context.hpp"
 #include "control/pd_mr_cq.hpp"
+#include "control/qp.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
 
 #include <cerrno>
@@ -42,6 +43,14 @@ struct ugdr_cq {
     std::uint64_t daemon_identity = 0;
     std::uint64_t connection_epoch = 0;
     int cqe = 0;
+    bool live = false;
+};
+
+struct ugdr_qp {
+    ugdr_pd *pd = nullptr;
+    ugdr_qp_init_attr init_attr{};
+    std::uint64_t daemon_identity = 0;
+    std::uint64_t connection_epoch = 0;
     bool live = false;
 };
 
@@ -400,6 +409,89 @@ class ClientRuntime {
         return -EOPNOTSUPP;
     }
 
+    ugdr_qp *create_qp(ugdr_pd *pd, ugdr_qp_init_attr *init_attr) {
+        std::lock_guard lock(mutex_);
+        if (pds_.find(pd) == pds_.end() || !pd->live || init_attr == nullptr ||
+            cqs_.find(init_attr->send_cq) == cqs_.end() ||
+            cqs_.find(init_attr->recv_cq) == cqs_.end() || !init_attr->send_cq->live ||
+            !init_attr->recv_cq->live || pd->context != init_attr->send_cq->context ||
+            pd->context != init_attr->recv_cq->context || init_attr->max_send_wr == 0 ||
+            init_attr->max_recv_wr == 0 || init_attr->max_send_sge == 0 ||
+            init_attr->max_recv_sge == 0 || init_attr->qp_type != UGDR_QPT_RC ||
+            (init_attr->sq_sig_all != 0 && init_attr->sq_sig_all != 1)) {
+            errno = EINVAL;
+            return nullptr;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            errno = connect_status;
+            return nullptr;
+        }
+        const std::uint64_t epoch = client_.connection_epoch();
+        if (pd->connection_epoch != epoch || init_attr->send_cq->connection_epoch != epoch ||
+            init_attr->recv_cq->connection_epoch != epoch) {
+            pd->live = false;
+            init_attr->send_cq->live = false;
+            init_attr->recv_cq->live = false;
+            errno = EINVAL;
+            return nullptr;
+        }
+
+        ugdr::control::QpCreateAttributes attributes;
+        attributes.send_cq_identity = init_attr->send_cq->daemon_identity;
+        attributes.recv_cq_identity = init_attr->recv_cq->daemon_identity;
+        attributes.max_send_wr = init_attr->max_send_wr;
+        attributes.max_recv_wr = init_attr->max_recv_wr;
+        attributes.max_send_sge = init_attr->max_send_sge;
+        attributes.max_recv_sge = init_attr->max_recv_sge;
+        attributes.qp_type = static_cast<std::uint32_t>(init_attr->qp_type);
+        attributes.sq_sig_all = static_cast<std::uint32_t>(init_attr->sq_sig_all);
+
+        auto qp = std::make_unique<ugdr_qp>();
+        std::uint64_t identity = 0;
+        const int create_status =
+            ugdr::control::client_create_qp(client_, pd->daemon_identity, attributes, &identity);
+        if (create_status != 0) {
+            errno = create_status;
+            return nullptr;
+        }
+        qp->pd = pd;
+        qp->init_attr = *init_attr;
+        qp->daemon_identity = identity;
+        qp->connection_epoch = epoch;
+        qp->live = true;
+        ugdr_qp *const result = qp.get();
+        try {
+            qp_storage_.push_back(std::move(qp));
+            qps_.insert(result);
+        } catch (...) {
+            result->live = false;
+            (void)ugdr::control::client_destroy_qp(client_, identity);
+            throw;
+        }
+        return result;
+    }
+
+    int destroy_qp(ugdr_qp *qp) {
+        std::lock_guard lock(mutex_);
+        if (qps_.find(qp) == qps_.end() || !qp->live) {
+            return EINVAL;
+        }
+        const int connect_status = ensure_connected();
+        if (connect_status != 0) {
+            return connect_status;
+        }
+        if (qp->connection_epoch != client_.connection_epoch()) {
+            qp->live = false;
+            return EINVAL;
+        }
+        const int destroy_status = ugdr::control::client_destroy_qp(client_, qp->daemon_identity);
+        if (destroy_status == 0) {
+            qp->live = false;
+        }
+        return destroy_status;
+    }
+
   private:
     int ensure_connected() {
         if (client_.connected()) {
@@ -420,23 +512,20 @@ class ClientRuntime {
     std::vector<std::unique_ptr<ugdr_pd>> pd_storage_;
     std::vector<std::unique_ptr<MrProxyRecord>> mr_storage_;
     std::vector<std::unique_ptr<ugdr_cq>> cq_storage_;
+    std::vector<std::unique_ptr<ugdr_qp>> qp_storage_;
     std::unordered_map<ugdr_device **, DeviceListRecord *> lists_;
     std::unordered_set<ugdr_device *> devices_;
     std::unordered_set<ugdr_context *> contexts_;
     std::unordered_set<ugdr_pd *> pds_;
     std::unordered_map<ugdr_mr *, MrProxyRecord *> mrs_;
     std::unordered_set<ugdr_cq *> cqs_;
+    std::unordered_set<ugdr_qp *> qps_;
     std::uint64_t next_mr_handle_ = 1;
 };
 
 ClientRuntime &runtime() {
     static ClientRuntime value;
     return value;
-}
-
-template <typename T> T *unsupported_pointer() noexcept {
-    errno = EOPNOTSUPP;
-    return nullptr;
 }
 
 constexpr int kUnsupported = EOPNOTSUPP;
@@ -543,12 +632,21 @@ int ugdr_poll_cq(ugdr_cq *cq, int num_entries, ugdr_wc *wc) noexcept {
     }
 }
 
-ugdr_qp *ugdr_create_qp(ugdr_pd *, ugdr_qp_init_attr *) noexcept {
-    return unsupported_pointer<ugdr_qp>();
+ugdr_qp *ugdr_create_qp(ugdr_pd *pd, ugdr_qp_init_attr *init_attr) noexcept {
+    try {
+        return runtime().create_qp(pd, init_attr);
+    } catch (...) {
+        errno = ENOMEM;
+        return nullptr;
+    }
 }
 
-int ugdr_destroy_qp(ugdr_qp *) noexcept {
-    return kUnsupported;
+int ugdr_destroy_qp(ugdr_qp *qp) noexcept {
+    try {
+        return runtime().destroy_qp(qp);
+    } catch (...) {
+        return ENOMEM;
+    }
 }
 
 int ugdr_modify_qp(ugdr_qp *, ugdr_qp_attr *, int) noexcept {

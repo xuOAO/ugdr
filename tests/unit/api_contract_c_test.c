@@ -4,7 +4,6 @@
 
 #include <errno.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -22,10 +21,7 @@ int main(void) {
     struct ugdr_wc expected_wc;
     struct ugdr_send_wr *bad_send = (struct ugdr_send_wr *)(uintptr_t)1;
     struct ugdr_recv_wr *bad_recv = (struct ugdr_recv_wr *)(uintptr_t)2;
-    char socket_path[128];
-
-    (void)snprintf(socket_path, sizeof(socket_path), "/tmp/ugdr-no-daemon-%ld.sock",
-                   (long)getpid());
+    const char socket_path[] = "/tmp/ugdr-api-contract-no-daemon.sock";
     if (setenv("UGDR_DAEMON_SOCKET", socket_path, 1) != 0) {
         return 1;
     }
@@ -74,8 +70,9 @@ int main(void) {
         ugdr_poll_cq(0, 1, &wc) != -EINVAL || memcmp(&wc, &expected_wc, sizeof(wc)) != 0) {
         return 8;
     }
-    if (ugdr_create_qp(0, &init_attr) != 0 || errno != EOPNOTSUPP ||
-        ugdr_destroy_qp(0) != EOPNOTSUPP || ugdr_modify_qp(0, &attr, UGDR_QP_STATE) != EOPNOTSUPP ||
+    errno = 0;
+    if (ugdr_create_qp(0, &init_attr) != 0 || errno != EINVAL || ugdr_destroy_qp(0) != EINVAL ||
+        ugdr_modify_qp(0, &attr, UGDR_QP_STATE) != EOPNOTSUPP ||
         ugdr_query_qp(0, &attr, UGDR_QP_STATE, &init_attr) != EOPNOTSUPP ||
         ugdr_query_qp_conn_info(0, &info) != EOPNOTSUPP ||
         ugdr_connect_qp(0, &info, &attr, UGDR_QP_TIMEOUT) != EOPNOTSUPP) {

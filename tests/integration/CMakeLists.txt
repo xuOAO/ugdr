@@ -49,6 +49,20 @@ add_test(
     COMMAND ugdr_pd_mr_cq_client_server_test
 )
 
+add_executable(ugdr_qp_client_server_test
+    qp_client_server_test.cpp
+)
+target_link_libraries(ugdr_qp_client_server_test
+    PRIVATE
+        ugdr_api
+        ugdr_control
+        ugdr_ipc
+)
+add_test(
+    NAME ugdr_qp_client_server
+    COMMAND ugdr_qp_client_server_test
+)
+
 add_executable(ugdr_cuda_ipc_mr_test
     cuda_ipc_mr_test.cpp
 )

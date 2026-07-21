@@ -23,6 +23,8 @@ enum class ControlMethod : std::uint32_t {
     deregister_mr = 7,
     create_cq = 8,
     destroy_cq = 9,
+    create_qp = 10,
+    destroy_qp = 11,
 };
 
 struct DeviceDescriptor {

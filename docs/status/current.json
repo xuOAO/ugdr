@@ -2,17 +2,17 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F03",
-  "step": "F03-S03",
+  "step": "F03-S04",
   "state": "completed",
   "next_actions": {
     "F03": [
       {
-        "step": "F03-S04",
-        "action": "QP/SQ/RQ 所有权与 CQ 关联"
+        "step": "F03-S05",
+        "action": "QP 查询、状态转换、endpoint 与原子建连"
       }
     ]
   },
   "blockers": [],
-  "updated_at": "2026-07-21T17:44:40+08:00",
+  "updated_at": "2026-07-21T19:43:25+08:00",
   "updated_by": "human"
 }

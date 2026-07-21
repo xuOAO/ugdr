@@ -43,6 +43,14 @@
     {
       "path": "docs/v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md",
       "revision": 20
+    },
+    {
+      "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md",
+      "revision": 13
+    },
+    {
+      "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md",
+      "revision": 7
     }
   ],
   "required_contracts": [

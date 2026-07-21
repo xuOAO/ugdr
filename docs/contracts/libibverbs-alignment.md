@@ -7,6 +7,7 @@ Sources:
 - [reviewed F02-S03 revision 7](../v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md)
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
 - [reviewed F03-S03 revision 13](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md)
+- [reviewed F03-S04 revision 7](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
 
 Status meanings:
 
@@ -55,7 +56,7 @@ Status meanings:
 | `ugdr_create_cq` | `ibv_create_cq` | aligned | The five-argument shape is preserved; v1 callers use a null event channel and completion vector 0. |
 | `ugdr_destroy_cq` | `ibv_destroy_cq` | aligned | Returns the errno value on failure and reports `EBUSY` while any QP references the CQ. |
 | `ugdr_poll_cq` | `ibv_poll_cq` | aligned | Uses the standard negative error domain and never writes `wc` on the placeholder path. |
-| `ugdr_create_qp`, `ugdr_destroy_qp` | `ibv_create_qp`, `ibv_destroy_qp` | subset adaptation | RC-only creation uses a flattened init record. A QP owns SQ/RQ, references its CQs, and shares one Context with its PD and CQs. Destroy creates no additional completion. |
+| `ugdr_create_qp`, `ugdr_destroy_qp` | `ibv_create_qp`, `ibv_destroy_qp` | subset adaptation | Implemented RC-only creation uses a flattened init record. A QP owns SQ/RQ metadata, references each distinct CQ once, and shares one Context with its PD and CQs. Destroy removes those relationships and creates no completion. |
 | `ugdr_modify_qp`, `ugdr_query_qp` | `ibv_modify_qp`, `ibv_query_qp` | subset adaptation | Uses the standard direct errno return domain and aligned exposed mask bits, but only the reviewed state/access/retry subset is public. Invalid requests fail without changing state or outputs. |
 | `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Application exchange plus `ibv_modify_qp` transitions | UGDR extension | Query returns `qp_num` and `endpoint_id`. Connect takes a const attribute record and requires timeout/retry/RNR/minimum-RNR masks before atomically staging INIT to RTR to RTS; it never advances the remote QP. |
 | `ugdr_post_send`, `ugdr_post_recv` | `ibv_post_send`, `ibv_post_recv` | aligned | For the supported WR subset, return domain, linked-list prefix acceptance, `bad_wr`, SQ/RQ ordering, descriptor lifetime, and capacity failure behavior follow verbs. |

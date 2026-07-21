@@ -1,6 +1,6 @@
 #include "control/control.hpp"
 #include "control/device_context.hpp"
-#include "control/pd_mr_cq.hpp"
+#include "control/qp.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
 #include "gpu/gpu.hpp"
 #include "ipc/ipc.hpp"
@@ -21,7 +21,7 @@ extern "C" void request_stop(int) {
 
 int run_server(const char *socket_path) {
     ugdr::gpu::RuntimeCudaIpcMemoryBackend memory_backend;
-    ugdr::control::PdMrCqService service(memory_backend);
+    ugdr::control::QpService service(memory_backend);
     ugdr::control::ControlIpcHandler handler(service);
     ugdr::ipc::IpcServer server(handler);
     const int start_status = server.start(socket_path);
