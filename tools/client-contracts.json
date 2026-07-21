@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "public_header": "include/ugdr/api.hpp",
+  "library_target": "ugdr_api",
+  "public_symbols": [
+    "ugdr_get_device_list",
+    "ugdr_free_device_list",
+    "ugdr_open_device",
+    "ugdr_close_device",
+    "ugdr_alloc_pd",
+    "ugdr_dealloc_pd",
+    "ugdr_reg_mr",
+    "ugdr_dereg_mr",
+    "ugdr_create_cq",
+    "ugdr_destroy_cq",
+    "ugdr_poll_cq",
+    "ugdr_create_qp",
+    "ugdr_destroy_qp",
+    "ugdr_modify_qp",
+    "ugdr_query_qp",
+    "ugdr_query_qp_conn_info",
+    "ugdr_connect_qp",
+    "ugdr_post_send",
+    "ugdr_post_recv"
+  ],
+  "reviewed_sources": [
+    {
+      "path": "docs/v1_docs/F02_API_契约与对象模型/F02_API_契约与对象模型_功能文档.md",
+      "revision": 45
+    },
+    {
+      "path": "docs/v1_docs/F02_API_契约与对象模型/F02-S01_v1_公开_API_表面与对齐基线_步骤文档.md",
+      "revision": 16
+    },
+    {
+      "path": "docs/v1_docs/F02_API_契约与对象模型/F02-S02_对象模型与生命周期契约_步骤文档.md",
+      "revision": 17
+    },
+    {
+      "path": "docs/v1_docs/F02_API_契约与对象模型/F02-S03_RC_QP_建连与状态机契约_步骤文档.md",
+      "revision": 7
+    },
+    {
+      "path": "docs/v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md",
+      "revision": 20
+    }
+  ],
+  "required_contracts": [
+    "docs/contracts/README.md",
+    "docs/contracts/public-api.md",
+    "docs/contracts/libibverbs-alignment.md",
+    "docs/contracts/object-lifecycle.md",
+    "docs/contracts/rc-qp-state-machine.md",
+    "docs/contracts/wr-wc-semantics.md"
+  ]
+}

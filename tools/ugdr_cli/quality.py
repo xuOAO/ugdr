@@ -325,6 +325,16 @@ def run_lint(
     checks.extend(
         [
             _repository_check(
+                "lint.client_contracts",
+                "tools/client-contracts.json",
+                [sys.executable, "tools/check_client_contracts.py", "--root", "."],
+                root,
+                "Client contract integration policy passed",
+                "Fix the Client contract inventory, source revisions, routes, or symbol coverage.",
+                runner,
+                timeout,
+            ),
+            _repository_check(
                 "lint.project_docs",
                 "docs/governance/document-policy.json",
                 [sys.executable, "tools/check_project_docs.py", "--root", "."],

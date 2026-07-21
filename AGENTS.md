@@ -8,7 +8,9 @@
 - `docs/decisions/`: durable decision records that do not belong in current state.
 - `docs/progress/`: execution and verification records that do not belong in current state.
 - `docs/architecture/repository-skeleton.md`: repository areas, targets, and dependency boundaries.
-- `tools/`: deterministic project checks and state operations.
+- `tools/client-contracts.json`: machine-readable Client contract, source revision, and public symbol inventory.
+- `tools/check_client_contracts.py`: deterministic Client contract and libibverbs-alignment integration check.
+- `tools/`: remaining deterministic project checks and state operations.
 
 ## Project Rules
 

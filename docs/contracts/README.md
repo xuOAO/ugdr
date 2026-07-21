@@ -21,6 +21,10 @@ WR/WC source:
 
 - [F02-S04 WR/WC 与完成语义契约](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md), Feishu revision 20.
 
+Integration and validation source:
+
+- [F02-S05 契约集成、占位入口与验证 Harness](../v1_docs/F02_API_契约与对象模型/F02-S05_契约集成、占位入口与验证_Harness_步骤文档.md), Feishu revision 15.
+
 Current contracts:
 
 - [Public API](public-api.md): v1 symbol surface and placeholder failure rules.
@@ -35,3 +39,7 @@ Current contracts:
 
 No file in this directory may define IPC encoding, internal WQE/CQE layout, worker scheduling, or
 GPU metadata.
+
+`tools/client-contracts.json` inventories these files, reviewed source revisions, the public header,
+library target, and every public symbol. `tools/check_client_contracts.py` checks that inventory;
+neither file is a semantic source.

@@ -7,19 +7,59 @@ add_test(
         --build-dir ${PROJECT_BINARY_DIR}
 )
 
-add_executable(ugdr_api_contract
-    api_contract_test.cpp
+add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )
-target_link_libraries(ugdr_api_contract
+set_property(TARGET ugdr_api_contract_c PROPERTY LINKER_LANGUAGE CXX)
+target_link_libraries(ugdr_api_contract_c
     PRIVATE
         ugdr_api
 )
-target_compile_definitions(ugdr_api_contract
+add_test(
+    NAME ugdr_api_contract_c
+    COMMAND ugdr_api_contract_c
+)
+
+add_executable(ugdr_api_contract_cpp
+    api_contract_test.cpp
+)
+target_link_libraries(ugdr_api_contract_cpp
     PRIVATE
-        UGDR_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+        ugdr_api
 )
 add_test(
-    NAME ugdr_api_contract
-    COMMAND ugdr_api_contract
+    NAME ugdr_api_contract_cpp
+    COMMAND ugdr_api_contract_cpp
+)
+
+find_path(IBVERBS_INCLUDE_DIR infiniband/verbs.h)
+if(NOT IBVERBS_INCLUDE_DIR)
+    message(FATAL_ERROR
+        "F02-S05 requires the rdma-core development header infiniband/verbs.h "
+        "for Client contract alignment validation"
+    )
+endif()
+
+add_executable(ugdr_libibverbs_alignment
+    libibverbs_alignment_test.cpp
+)
+target_include_directories(ugdr_libibverbs_alignment
+    PRIVATE
+        ${IBVERBS_INCLUDE_DIR}
+)
+target_link_libraries(ugdr_libibverbs_alignment
+    PRIVATE
+        ugdr_api
+)
+add_test(
+    NAME ugdr_libibverbs_alignment
+    COMMAND ugdr_libibverbs_alignment
+)
+
+set_tests_properties(
+    ugdr_api_contract_c
+    ugdr_api_contract_cpp
+    ugdr_libibverbs_alignment
+    PROPERTIES
+        LABELS "ugdr_contract"
 )
