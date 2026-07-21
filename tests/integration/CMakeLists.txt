@@ -21,6 +21,20 @@ add_test(
     COMMAND ugdr_ipc_client_server_test
 )
 
+add_executable(ugdr_device_context_client_server_test
+    device_context_client_server_test.cpp
+)
+target_link_libraries(ugdr_device_context_client_server_test
+    PRIVATE
+        ugdr_api
+        ugdr_control
+        ugdr_ipc
+)
+add_test(
+    NAME ugdr_device_context_client_server
+    COMMAND ugdr_device_context_client_server_test
+)
+
 add_test(
     NAME project_state_transition_matrix
     COMMAND

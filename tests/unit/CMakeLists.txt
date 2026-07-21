@@ -31,6 +31,30 @@ add_test(
     COMMAND ugdr_ipc_adapter_test
 )
 
+add_executable(ugdr_object_registry_test
+    object_registry_test.cpp
+)
+target_link_libraries(ugdr_object_registry_test
+    PRIVATE
+        ugdr_control
+)
+add_test(
+    NAME ugdr_object_registry
+    COMMAND ugdr_object_registry_test
+)
+
+add_executable(ugdr_device_context_test
+    device_context_test.cpp
+)
+target_link_libraries(ugdr_device_context_test
+    PRIVATE
+        ugdr_control
+)
+add_test(
+    NAME ugdr_device_context
+    COMMAND ugdr_device_context_test
+)
+
 add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )

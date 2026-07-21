@@ -1,9 +1,11 @@
 #include "control/control.hpp"
+#include "control/device_context.hpp"
 #include "gpu/gpu.hpp"
 #include "ipc/ipc.hpp"
 #include "worker/worker.hpp"
 
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
@@ -16,7 +18,7 @@ extern "C" void request_stop(int) {
 }
 
 int run_server(const char *socket_path) {
-    ugdr::control::UnsupportedControlService service;
+    ugdr::control::DeviceContextService service;
     ugdr::control::ControlIpcHandler handler(service);
     ugdr::ipc::IpcServer server(handler);
     const int start_status = server.start(socket_path);
@@ -43,13 +45,16 @@ int main(int argc, char **argv) {
     if (argc == 3 && std::strcmp(argv[1], "--socket") == 0) {
         return run_server(argv[2]);
     }
+    if (argc == 2 && std::strcmp(argv[1], "--help") == 0) {
+        std::cout << "usage: ugdr_daemon [--socket PATH]\n";
+        return 0;
+    }
     if (argc != 1) {
         std::cerr << "usage: ugdr_daemon [--socket PATH]\n";
         return 2;
     }
-
-    const int control_status = ugdr::control_placeholder();
-    const int worker_status = ugdr::worker_placeholder();
-    const int gpu_status = ugdr::gpu_placeholder();
-    return control_status | worker_status | gpu_status;
+    const char *const configured = std::getenv("UGDR_DAEMON_SOCKET");
+    return run_server(configured != nullptr && configured[0] != '\0'
+                          ? configured
+                          : ugdr::control::kDefaultDaemonSocket);
 }

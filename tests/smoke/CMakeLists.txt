@@ -5,7 +5,7 @@ add_test(
 
 add_test(
     NAME ugdr_daemon_smoke
-    COMMAND ugdr_daemon
+    COMMAND ugdr_daemon --help
 )
 
 set_tests_properties(

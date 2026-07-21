@@ -18,6 +18,12 @@ add_library(ugdr_api STATIC
 target_include_directories(ugdr_api
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_api
+    PRIVATE
+        ugdr_control
 )
 
 add_library(ugdr_ipc STATIC
@@ -32,7 +38,9 @@ target_include_directories(ugdr_ipc
 
 add_library(ugdr_control STATIC
     src/control/control.cpp
+    src/control/device_context.cpp
     src/control/ipc_adapter.cpp
+    src/control/object_identity.cpp
 )
 target_include_directories(ugdr_control
     PUBLIC

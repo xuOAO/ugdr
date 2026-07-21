@@ -2,8 +2,11 @@
 
 #include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #include <type_traits>
+#include <unistd.h>
 
 namespace {
 
@@ -63,26 +66,31 @@ int main() {
     static_assert(std::is_standard_layout_v<ugdr_qp_attr>);
     static_assert(std::is_standard_layout_v<ugdr_qp_conn_info>);
 
+    const std::string socket_path =
+        "/tmp/ugdr-no-daemon-" + std::to_string(static_cast<long long>(::getpid())) + ".sock";
+    if (::setenv("UGDR_DAEMON_SOCKET", socket_path.c_str(), 1) != 0) {
+        return 1;
+    }
     int num_devices = 17;
     errno = 0;
-    if (ugdr_get_device_list(&num_devices) != nullptr || errno != EOPNOTSUPP || num_devices != 17) {
-        return 1;
+    if (ugdr_get_device_list(&num_devices) != nullptr || errno == 0 || num_devices != 17) {
+        return 2;
     }
 
     auto **device_list = sentinel_pointer<ugdr_device *>(1);
     errno = 0;
     ugdr_free_device_list(device_list);
-    if (errno != EOPNOTSUPP) {
-        return 2;
+    if (errno != EINVAL) {
+        return 3;
     }
 
     errno = 0;
-    if (ugdr_open_device(sentinel_pointer<ugdr_device>(2)) != nullptr || errno != EOPNOTSUPP) {
-        return 3;
+    if (ugdr_open_device(sentinel_pointer<ugdr_device>(2)) != nullptr || errno != EINVAL) {
+        return 4;
     }
     errno = 0;
-    if (ugdr_close_device(sentinel_pointer<ugdr_context>(3)) != -1 || errno != EOPNOTSUPP) {
-        return 4;
+    if (ugdr_close_device(sentinel_pointer<ugdr_context>(3)) != -1 || errno != EINVAL) {
+        return 5;
     }
 
     errno = 0;
