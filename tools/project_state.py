@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import project_roadmap
+
 
 STATE_KEYS = {
     "schema_version",
@@ -204,6 +206,53 @@ def state_paths(root: Path) -> Tuple[Path, Path]:
     return root / "docs/status/current.json", root / "docs/status/current.schema.json"
 
 
+def roadmap_errors(errors: List[Dict]) -> List[Dict]:
+    prefixed = []
+    for error in errors:
+        translated = copy.deepcopy(error)
+        path = translated.get("path", "$")
+        if not path.startswith("$roadmap"):
+            translated["path"] = "$roadmap" + path[1:]
+        prefixed.append(translated)
+    return prefixed
+
+
+def expected_next_actions(state: Dict, roadmap: Dict) -> Tuple[Optional[Dict], List[Dict]]:
+    if state.get("state") != "completed":
+        return {}, []
+    derived = project_roadmap.derive_next_actions(
+        roadmap, state.get("version"), state.get("feature"), state.get("step")
+    )
+    if derived is None:
+        return None, [
+            issue(
+                "$roadmap.routes",
+                "completed scope has no reviewed roadmap route",
+                {
+                    "version": state.get("version"),
+                    "feature": state.get("feature"),
+                    "step": state.get("step"),
+                },
+            )
+        ]
+    return derived, []
+
+
+def validate_roadmap_consistency(state: Dict, roadmap: Dict) -> List[Dict]:
+    expected, errors = expected_next_actions(state, roadmap)
+    if errors:
+        return errors
+    if state.get("next_actions") != expected:
+        return [
+            issue(
+                "$.next_actions",
+                "must equal actions derived from the reviewed roadmap",
+                {"expected": expected, "actual": state.get("next_actions")},
+            )
+        ]
+    return []
+
+
 def validate_repository_state(root: Path) -> Tuple[Optional[Dict], List[Dict]]:
     state_path, schema_path = state_paths(root)
     try:
@@ -211,7 +260,12 @@ def validate_repository_state(root: Path) -> Tuple[Optional[Dict], List[Dict]]:
         state = load_json(state_path)
     except ProjectStateError as error:
         return None, [issue("$", str(error))]
-    return state, validate_state_value(state, schema)
+    errors = validate_state_value(state, schema)
+    roadmap, loaded_errors = project_roadmap.load_validated_roadmap(root, validate_next_actions)
+    errors.extend(roadmap_errors(loaded_errors))
+    if roadmap is not None and not loaded_errors:
+        errors.extend(validate_roadmap_consistency(state, roadmap))
+    return state, errors
 
 
 def reviewed_status(path: Path) -> Tuple[bool, str]:
@@ -315,6 +369,10 @@ def command_transition(args) -> int:
         return 2
 
     current_errors = validate_state_value(current, schema)
+    roadmap, loaded_errors = project_roadmap.load_validated_roadmap(root, validate_next_actions)
+    current_errors.extend(roadmap_errors(loaded_errors))
+    if roadmap is not None and not loaded_errors:
+        current_errors.extend(validate_roadmap_consistency(current, roadmap))
     if current_errors:
         emit({"status": "error", "errors": current_errors}, stream=sys.stderr)
         return 2
@@ -341,21 +399,21 @@ def command_transition(args) -> int:
         if value is not None:
             candidate[key] = value
 
-    if args.next_actions_file:
-        try:
-            next_actions_path = resolve_inside(root, args.next_actions_file, "--next-actions-file")
-            candidate["next_actions"] = load_json(next_actions_path)
-        except ProjectStateError as error:
+    candidate["next_actions"] = {}
+    if target == "completed":
+        derived, derivation_errors = expected_next_actions(candidate, roadmap)
+        if derivation_errors:
             emit(
                 {
                     "status": "rejected",
                     "current_state": current["state"],
                     "target_state": target,
-                    "errors": [issue("$.next_actions", str(error))],
+                    "errors": derivation_errors,
                 },
                 stream=sys.stderr,
             )
             return 3
+        candidate["next_actions"] = derived
 
     candidate["blockers"] = list(args.blocker) if target == "blocked" else []
     errors = validate_state_value(candidate, schema)
@@ -415,6 +473,10 @@ def command_advance_scope(args) -> int:
         return 2
 
     current_errors = validate_state_value(current, schema)
+    roadmap, loaded_errors = project_roadmap.load_validated_roadmap(root, validate_next_actions)
+    current_errors.extend(roadmap_errors(loaded_errors))
+    if roadmap is not None and not loaded_errors:
+        current_errors.extend(validate_roadmap_consistency(current, roadmap))
     if current_errors:
         emit({"status": "error", "errors": current_errors}, stream=sys.stderr)
         return 2
@@ -433,6 +495,20 @@ def command_advance_scope(args) -> int:
     if target_scope == current_scope:
         errors.append(issue("$scope", "scope advancement must select a new scope", list(target_scope)))
 
+    allowed_scopes = {
+        (current["version"], feature, action if isinstance(action, str) else action.get("step"))
+        for feature, actions in current.get("next_actions", {}).items()
+        for action in actions
+    }
+    if target_scope not in allowed_scopes:
+        errors.append(
+            issue(
+                "$scope",
+                "scope must be selected from reviewed roadmap next_actions",
+                list(target_scope),
+            )
+        )
+
     candidate = copy.deepcopy(current)
     candidate.update(
         {
@@ -443,17 +519,9 @@ def command_advance_scope(args) -> int:
             "updated_by": args.updated_by,
             "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "blockers": list(args.blocker) if target == "blocked" else [],
+            "next_actions": {},
         }
     )
-
-    if args.clear_next_actions:
-        candidate["next_actions"] = {}
-    else:
-        try:
-            next_actions_path = resolve_inside(root, args.next_actions_file, "--next-actions-file")
-            candidate["next_actions"] = load_json(next_actions_path)
-        except ProjectStateError as error:
-            errors.append(issue("$.next_actions", str(error)))
 
     errors.extend(validate_state_value(candidate, schema))
     errors.extend(validate_target_gate(root, current, candidate, args))
@@ -501,6 +569,52 @@ def command_advance_scope(args) -> int:
     return 0
 
 
+def command_reconcile_roadmap(args) -> int:
+    root = Path(args.root).resolve()
+    state_path, schema_path = state_paths(root)
+    try:
+        schema = load_json(schema_path)
+        current = load_json(state_path)
+    except ProjectStateError as error:
+        emit({"status": "error", "errors": [issue("$", str(error))]}, stream=sys.stderr)
+        return 2
+
+    errors = validate_state_value(current, schema)
+    roadmap, loaded_errors = project_roadmap.load_validated_roadmap(root, validate_next_actions)
+    errors.extend(roadmap_errors(loaded_errors))
+    expected = None
+    if roadmap is not None and not loaded_errors:
+        expected, derivation_errors = expected_next_actions(current, roadmap)
+        errors.extend(derivation_errors)
+    if errors:
+        emit({"status": "error", "errors": errors}, stream=sys.stderr)
+        return 2
+
+    if current["next_actions"] == expected:
+        emit({"status": "unchanged", "state": current})
+        return 0
+
+    candidate = copy.deepcopy(current)
+    candidate["next_actions"] = expected
+    candidate["updated_by"] = args.updated_by
+    candidate["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    changes = {
+        key: {"before": current.get(key), "after": candidate.get(key)}
+        for key in sorted(STATE_KEYS)
+        if current.get(key) != candidate.get(key)
+    }
+    if args.dry_run:
+        emit({"status": "dry_run", "changes": changes})
+        return 0
+    try:
+        atomic_write_json(state_path, candidate)
+    except OSError as error:
+        emit({"status": "error", "message": str(error)}, stream=sys.stderr)
+        return 4
+    emit({"status": "reconciled", "changes": changes})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate and update UGDR project state.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -516,7 +630,6 @@ def build_parser() -> argparse.ArgumentParser:
     transition_parser.add_argument("--version")
     transition_parser.add_argument("--feature")
     transition_parser.add_argument("--step")
-    transition_parser.add_argument("--next-actions-file")
     transition_parser.add_argument("--blocker", action="append", default=[])
     transition_parser.add_argument("--reviewed-doc", action="append", default=[])
     transition_parser.add_argument("--verification-passed", action="store_true")
@@ -535,15 +648,20 @@ def build_parser() -> argparse.ArgumentParser:
     advance_parser.add_argument("--version", required=True)
     advance_parser.add_argument("--feature", required=True)
     advance_parser.add_argument("--step", required=True)
-    next_actions_group = advance_parser.add_mutually_exclusive_group(required=True)
-    next_actions_group.add_argument("--next-actions-file")
-    next_actions_group.add_argument("--clear-next-actions", action="store_true")
     advance_parser.add_argument("--blocker", action="append", default=[])
     advance_parser.add_argument("--reviewed-doc", action="append", default=[])
     advance_parser.add_argument("--verification-passed", action="store_true")
     advance_parser.add_argument("--human-confirmed", action="store_true")
     advance_parser.add_argument("--dry-run", action="store_true")
     advance_parser.set_defaults(handler=command_advance_scope)
+
+    reconcile_parser = subparsers.add_parser(
+        "reconcile-roadmap", help="Derive current next_actions from the reviewed roadmap."
+    )
+    reconcile_parser.add_argument("--root", default=".", help="Repository root.")
+    reconcile_parser.add_argument("--updated-by", choices=("human", "agent"), required=True)
+    reconcile_parser.add_argument("--dry-run", action="store_true")
+    reconcile_parser.set_defaults(handler=command_reconcile_roadmap)
     return parser
 
 

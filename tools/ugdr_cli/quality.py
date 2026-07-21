@@ -366,7 +366,7 @@ def run_lint(
                 [sys.executable, "tools/project_state.py", "validate", "--root", "."],
                 root,
                 "project state is valid",
-                "Use tools/project_state.py transition to repair project state.",
+                "Use project_state.py transition, advance-scope, or reconcile-roadmap to repair project state.",
                 runner,
                 timeout,
             ),

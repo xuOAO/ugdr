@@ -4,8 +4,15 @@
   "feature": "F03",
   "step": "F03-S01",
   "state": "completed",
-  "next_actions": {},
+  "next_actions": {
+    "F03": [
+      {
+        "step": "F03-S02",
+        "action": "类型化 generation handle 注册表与 Context"
+      }
+    ]
+  },
   "blockers": [],
-  "updated_at": "2026-07-21T13:51:23+08:00",
-  "updated_by": "human"
+  "updated_at": "2026-07-21T14:17:44+08:00",
+  "updated_by": "agent"
 }

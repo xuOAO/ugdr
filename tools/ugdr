@@ -75,6 +75,13 @@ def create_parser() -> argparse.ArgumentParser:
         "advance-scope", help="Start a user-confirmed scope after a completed scope."
     )
     _add_transition_arguments(advance, advance_scope=True)
+
+    reconcile = state_commands.add_parser(
+        "reconcile-roadmap", help="Derive current next_actions from the reviewed roadmap."
+    )
+    reconcile.add_argument("--updated-by", required=True, choices=("human", "agent"))
+    reconcile.add_argument("--dry-run", action="store_true")
+    reconcile.add_argument("--json", action="store_true", dest="json_mode")
     return parser
 
 
@@ -92,12 +99,6 @@ def _add_transition_arguments(parser: argparse.ArgumentParser, advance_scope=Fal
     parser.add_argument("--version", required=advance_scope)
     parser.add_argument("--feature", required=advance_scope)
     parser.add_argument("--step", required=advance_scope)
-    if advance_scope:
-        actions = parser.add_mutually_exclusive_group(required=True)
-        actions.add_argument("--next-actions-file")
-        actions.add_argument("--clear-next-actions", action="store_true")
-    else:
-        parser.add_argument("--next-actions-file")
     parser.add_argument("--blocker", action="append", default=[])
     parser.add_argument("--reviewed-doc", action="append", default=[])
     parser.add_argument("--verification-passed", action="store_true")
@@ -108,7 +109,7 @@ def _add_transition_arguments(parser: argparse.ArgumentParser, advance_scope=Fal
 
 def _state_core_arguments(args, advance_scope=False):
     values = ["--to", args.to, "--updated-by", args.updated_by]
-    for name in ("version", "feature", "step", "next_actions_file"):
+    for name in ("version", "feature", "step"):
         value = getattr(args, name, None)
         if value is not None:
             values.extend(["--" + name.replace("_", "-"), value])
@@ -120,7 +121,6 @@ def _state_core_arguments(args, advance_scope=False):
         "verification_passed",
         "human_confirmed",
         "dry_run",
-        "clear_next_actions",
     ):
         if getattr(args, name, False):
             values.append("--" + name.replace("_", "-"))
@@ -132,6 +132,11 @@ def _run_state_command(args):
         return state_show(REPOSITORY_ROOT)
     if args.state_command == "next":
         return state_next(REPOSITORY_ROOT)
+    if args.state_command == "reconcile-roadmap":
+        arguments = ["--updated-by", args.updated_by]
+        if args.dry_run:
+            arguments.append("--dry-run")
+        return run_state_core(REPOSITORY_ROOT, args.state_command, arguments)
     return run_state_core(
         REPOSITORY_ROOT,
         args.state_command,

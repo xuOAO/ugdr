@@ -15,7 +15,7 @@ Add `tools/project_state.py advance-scope` as a separate operation. It does not 
 - the current state to be `completed`;
 - a different, explicit version, feature, and step;
 - `--human-confirmed` with `--updated-by human`;
-- an explicit replacement or clearing of `next_actions`;
+- selection of a target present in the roadmap-derived `next_actions`; the new non-completed scope starts with empty candidates;
 - all target-state gates, including reviewed documents for `ready_for_implementation`, verification for `awaiting_acceptance`, and blockers for `blocked`.
 
 The command validates the complete candidate state and atomically replaces `current.json`, matching the existing transition write contract.

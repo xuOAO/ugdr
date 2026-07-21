@@ -12,3 +12,4 @@ Records:
 - [0001 Advance a completed scope](0001-advance-completed-scope.md)
 - [0002 Strict object lifecycle](0002-strict-object-lifecycle.md)
 - [0003 Atomic same-daemon RC connect helper](0003-atomic-rc-connect-helper.md)
+- [0004 Derive next actions from a reviewed roadmap](0004-reviewed-roadmap-next-actions.md)

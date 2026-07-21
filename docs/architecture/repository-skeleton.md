@@ -4,7 +4,7 @@ This document is the human-readable entry point for the repository skeleton. It 
 
 `tools/module-boundaries.json` is the machine-readable source for required paths, production targets, and allowed production dependencies. The generated section below must match that policy. Change it only when a module boundary, target name, required top-level path, or allowed dependency changes.
 
-`tools/ugdr` is the repository-local Python entry for development harness commands. F01-S03 owns its `bootstrap` and `doctor` subcommands; F01-S04 adds `format`, `lint`, `build`, `test`, and `smoke`; F01-S05 adds deterministic `state show`, `state next`, `state transition`, and `state advance-scope` commands backed by `tools/workflow-rules.json` and the existing state core. Their implementation remains under `tools/ugdr_cli`, uses `.clang-format` and `.clang-tidy` as repository quality rules, and does not change the production target dependency graph. `.agents/skills/ugdr-continue-project/` supplies the Agent-facing orchestration loop, while Git/PR safety helpers remain testable repository tooling rather than project-state facts.
+`tools/ugdr` is the repository-local Python entry for development harness commands. F01-S03 owns its `bootstrap` and `doctor` subcommands; F01-S04 adds `format`, `lint`, `build`, `test`, and `smoke`; F01-S05 adds deterministic `state show`, `state next`, `state transition`, and `state advance-scope` commands backed by `tools/workflow-rules.json` and the existing state core. `docs/status/roadmap.json` binds machine routes to reviewed Markdown revisions and hashes; completion derives `current.json.next_actions` from that roadmap, while `state reconcile-roadmap` repairs legacy drift without guessing from chat or prose. Their implementation remains under `tools/ugdr_cli`, uses `.clang-format` and `.clang-tidy` as repository quality rules, and does not change the production target dependency graph. `.agents/skills/ugdr-continue-project/` supplies the Agent-facing orchestration loop, while Git/PR safety helpers remain testable repository tooling rather than project-state facts.
 
 `ugdr_ipc` is the business-neutral local IPC layer. It owns the Unix Domain `SOCK_SEQPACKET`
 envelope, `SCM_RIGHTS` fd transfer, and synchronous client/single-threaded server types.
@@ -28,7 +28,7 @@ F03-S01.
 | `docs/contracts` | 已审阅的 Client 可观察 API 与行为契约 |
 | `docs/governance` | 机器可检查的文档治理规则 |
 | `docs/progress` | 执行过程与验证交接记录 |
-| `docs/status` | 唯一机器可读当前状态 |
+| `docs/status` | 机器可读当前状态与受审阅路线图 |
 | `docs/v1_docs` | 已审阅 v1 设计的执行快照与索引 |
 
 ## Production targets

@@ -45,7 +45,7 @@ def valid_state() -> dict:
         "feature": "F01",
         "step": "F01-S02",
         "state": "ready_for_implementation",
-        "next_actions": {"F01": ["F01-S02"]},
+        "next_actions": {},
         "blockers": [],
         "updated_at": "2026-07-19T20:00:00+08:00",
         "updated_by": "agent",
@@ -73,7 +73,35 @@ def main() -> int:
         write(agents_path, valid_agents)
         write(index_path, valid_index)
         write(design_path, "# Design\n")
+        roadmap_source = root / "docs/v1_docs/roadmap.md"
+        write(
+            roadmap_source,
+            "---\nreview_status: reviewed\nsource_revision: 1\n"
+            "generated_body_sha256: {}\n---\n# Roadmap\n".format("c" * 64),
+        )
         write_json(state_path, valid_state())
+        write_json(
+            root / "docs/status/roadmap.json",
+            {
+                "schema_version": 1,
+                "reviewed_sources": [
+                    {
+                        "path": "docs/v1_docs/roadmap.md",
+                        "revision": 1,
+                        "body_sha256": "c" * 64,
+                    }
+                ],
+                "routes": [
+                    {
+                        "version": "v1",
+                        "feature": "F01",
+                        "step": "F01-S02",
+                        "source": "docs/v1_docs/roadmap.md",
+                        "next_actions": {},
+                    }
+                ],
+            },
+        )
         schema_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(str(args.schema), str(schema_path))
 

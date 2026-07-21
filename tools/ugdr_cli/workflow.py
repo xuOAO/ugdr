@@ -132,15 +132,15 @@ def state_next(root: Path) -> Tuple[Dict[str, object], int]:
         if not actions:
             action = "no_next_action"
             requires_human = True
-            reason = "当前 scope 已完成，但没有可选择的 next_action。"
+            reason = "当前 scope 的受审阅 roadmap route 明确为终点。"
         elif len(actions) == 1:
             action = "advance_scope"
             requires_human = False
-            reason = "存在唯一 next_action；当前继续意图可作为明确选择。"
+            reason = "受审阅 roadmap 派生出唯一 next_action；当前继续意图可作为明确选择。"
         else:
             action = "select_next_action"
             requires_human = True
-            reason = "存在多个 next_actions，必须由用户明确选择。"
+            reason = "受审阅 roadmap 派生出多个 next_actions，必须由用户明确选择。"
 
     decision = WorkflowDecision(
         state=state,

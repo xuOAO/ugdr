@@ -36,11 +36,14 @@
     "docs/progress/README.md",
     "docs/status/current.json",
     "docs/status/current.schema.json",
+    "docs/status/roadmap.json",
+    "docs/status/roadmap.schema.json",
     "docs/v1_docs/README.md",
     "tools/check_project_docs.py",
     "tools/client-contracts.json",
     "tools/check_client_contracts.py",
     "tools/project_state.py",
+    "tools/project_roadmap.py",
     "tools/workflow-rules.json",
     "tools/ugdr",
     "tools/ugdr_cli",
@@ -107,7 +110,7 @@
     },
     {
       "path": "docs/status",
-      "responsibility": "唯一机器可读当前状态"
+      "responsibility": "机器可读当前状态与受审阅路线图"
     },
     {
       "path": "docs/v1_docs",

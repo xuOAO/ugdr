@@ -83,6 +83,7 @@ add_test(
         --agents ${PROJECT_SOURCE_DIR}/AGENTS.md
         --index ${PROJECT_SOURCE_DIR}/docs/v1_docs/README.md
         --state ${PROJECT_SOURCE_DIR}/docs/status/current.json
+        --roadmap ${PROJECT_SOURCE_DIR}/docs/status/roadmap.json
 )
 set_tests_properties(
     project_handoff_surface

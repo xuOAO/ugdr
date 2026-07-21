@@ -9,9 +9,12 @@
     "docs/progress/README.md",
     "docs/status/current.json",
     "docs/status/current.schema.json",
+    "docs/status/roadmap.json",
+    "docs/status/roadmap.schema.json",
     "docs/v1_docs/README.md",
     "tools/check_project_docs.py",
-    "tools/project_state.py"
+    "tools/project_state.py",
+    "tools/project_roadmap.py"
   ],
   "max_lines": {
     "AGENTS.md": 150,
