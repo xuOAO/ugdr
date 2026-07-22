@@ -126,7 +126,7 @@ int main() {
     ugdr_wc wc{};
     wc.wr_id = 91;
     const ugdr_wc expected = wc;
-    if (ugdr_poll_cq(cq, 1, &wc) != -EOPNOTSUPP || std::memcmp(&wc, &expected, sizeof(wc)) != 0) {
+    if (ugdr_poll_cq(cq, 1, &wc) != 0 || std::memcmp(&wc, &expected, sizeof(wc)) != 0) {
         return 10;
     }
     if (ugdr_destroy_cq(cq) != 0 || ugdr_destroy_cq(cq) != EINVAL || ugdr_dealloc_pd(pd) != 0 ||

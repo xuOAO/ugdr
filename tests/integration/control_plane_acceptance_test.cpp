@@ -150,7 +150,7 @@ bool posting_and_poll_contract(ugdr_qp *qp, ugdr_cq *cq) {
     const ugdr_recv_wr expected_recv = recv;
     auto *bad_recv = reinterpret_cast<ugdr_recv_wr *>(static_cast<std::uintptr_t>(2));
 
-    return ugdr_poll_cq(cq, 1, &completion) == -EOPNOTSUPP &&
+    return ugdr_poll_cq(cq, 1, &completion) == 0 &&
            std::memcmp(&completion, &expected_completion, sizeof(completion)) == 0 &&
            ugdr_post_send(qp, &send, &bad_send) == 0 &&
            bad_send == reinterpret_cast<ugdr_send_wr *>(static_cast<std::uintptr_t>(1)) &&

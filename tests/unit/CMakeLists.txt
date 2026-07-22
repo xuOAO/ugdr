@@ -92,6 +92,18 @@ add_test(
     COMMAND ugdr_shared_ring_test
 )
 
+add_executable(ugdr_completion_queue_test
+    completion_queue_test.cpp
+)
+target_link_libraries(ugdr_completion_queue_test
+    PRIVATE
+        ugdr_queue
+)
+add_test(
+    NAME ugdr_completion_queue
+    COMMAND ugdr_completion_queue_test
+)
+
 add_executable(ugdr_wr_posting_test
     wr_posting_test.cpp
 )

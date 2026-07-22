@@ -5,12 +5,14 @@
 #include "control/pd_mr_cq.hpp"
 #include "control/qp.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
+#include "queue/descriptors.hpp"
 #include "queue/shared_ring.hpp"
 
 #include <cerrno>
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -47,6 +49,7 @@ struct ugdr_cq {
     std::uint64_t connection_epoch = 0;
     int cqe = 0;
     bool live = false;
+    std::mutex polling_mutex;
     ugdr::queue::SharedRing completions;
 };
 
@@ -373,6 +376,7 @@ class ClientRuntime {
         ugdr_cq *const result = cq.get();
         try {
             cq_storage_.push_back(std::move(cq));
+            std::unique_lock registry_lock(cq_registry_mutex_);
             cqs_.insert(result);
         } catch (...) {
             result->live = false;
@@ -384,7 +388,11 @@ class ClientRuntime {
 
     int destroy_cq(ugdr_cq *cq) {
         std::lock_guard lock(mutex_);
-        if (cqs_.find(cq) == cqs_.end() || !cq->live) {
+        if (cqs_.find(cq) == cqs_.end()) {
+            return EINVAL;
+        }
+        std::lock_guard polling_lock(cq->polling_mutex);
+        if (!cq->live) {
             return EINVAL;
         }
         const int connect_status = ensure_connected();
@@ -404,21 +412,58 @@ class ClientRuntime {
         return destroy_status;
     }
 
-    int poll_cq(ugdr_cq *cq) {
-        std::lock_guard lock(mutex_);
-        if (cqs_.find(cq) == cqs_.end() || !cq->live) {
+    int poll_cq(ugdr_cq *cq, int num_entries, ugdr_wc *wc) noexcept {
+        if (cq == nullptr || num_entries < 0 || (num_entries > 0 && wc == nullptr)) {
             return -EINVAL;
         }
-        const int connect_status = ensure_connected();
-        if (connect_status != 0) {
-            return -connect_status;
+        {
+            std::shared_lock registry_lock(cq_registry_mutex_);
+            if (cqs_.find(cq) == cqs_.end()) {
+                return -EINVAL;
+            }
         }
-        if (cq->connection_epoch != client_.connection_epoch()) {
-            cq->live = false;
-            cq->completions.reset();
+        std::lock_guard polling_lock(cq->polling_mutex);
+        if (!cq->live) {
             return -EINVAL;
         }
-        return -EOPNOTSUPP;
+        if (num_entries == 0) {
+            return 0;
+        }
+
+        ugdr::queue::ConstSlotBatch batch;
+        const int peek_status =
+            cq->completions.consumer_peek(static_cast<std::uint32_t>(num_entries), &batch);
+        if (peek_status == EAGAIN) {
+            return 0;
+        }
+        if (peek_status != 0) {
+            return -peek_status;
+        }
+
+        std::size_t output_index = 0;
+        const auto copy_span = [&](ugdr::queue::ConstSlotSpan span) {
+            const auto *slots = static_cast<const std::byte *>(span.data);
+            for (std::uint32_t index = 0; index < span.count; ++index) {
+                ugdr::queue::CompletionEntry entry;
+                std::memcpy(&entry,
+                            slots + static_cast<std::size_t>(index) *
+                                        cq->completions.descriptor().slot_stride,
+                            sizeof(entry));
+                ugdr_wc completion{};
+                completion.wr_id = entry.wr_id;
+                completion.status = static_cast<ugdr_wc_status>(entry.status);
+                completion.opcode = static_cast<ugdr_wc_opcode>(entry.opcode);
+                completion.byte_len = entry.byte_length;
+                completion.imm_data = entry.immediate_data;
+                completion.qp_num = entry.qp_num;
+                completion.wc_flags = entry.flags;
+                wc[output_index++] = completion;
+            }
+        };
+        copy_span(batch.first);
+        copy_span(batch.second);
+        const int release_status = cq->completions.consumer_release(batch.count);
+        return release_status == 0 ? static_cast<int>(batch.count) : -release_status;
     }
 
     ugdr_qp *create_qp(ugdr_pd *pd, ugdr_qp_init_attr *init_attr) {
@@ -443,8 +488,15 @@ class ClientRuntime {
         if (pd->connection_epoch != epoch || init_attr->send_cq->connection_epoch != epoch ||
             init_attr->recv_cq->connection_epoch != epoch) {
             pd->live = false;
-            init_attr->send_cq->live = false;
-            init_attr->recv_cq->live = false;
+            if (init_attr->send_cq == init_attr->recv_cq) {
+                std::lock_guard polling_lock(init_attr->send_cq->polling_mutex);
+                init_attr->send_cq->live = false;
+            } else {
+                std::scoped_lock polling_locks(init_attr->send_cq->polling_mutex,
+                                               init_attr->recv_cq->polling_mutex);
+                init_attr->send_cq->live = false;
+                init_attr->recv_cq->live = false;
+            }
             errno = EINVAL;
             return nullptr;
         }
@@ -735,6 +787,7 @@ class ClientRuntime {
     }
 
     std::mutex mutex_;
+    std::shared_mutex cq_registry_mutex_;
     std::shared_mutex qp_registry_mutex_;
     ugdr::control::ControlClient client_;
     std::vector<std::unique_ptr<DeviceListRecord>> list_storage_;
@@ -855,7 +908,7 @@ int ugdr_poll_cq(ugdr_cq *cq, int num_entries, ugdr_wc *wc) noexcept {
         return -EINVAL;
     }
     try {
-        return runtime().poll_cq(cq);
+        return runtime().poll_cq(cq, num_entries, wc);
     } catch (...) {
         return -ENOMEM;
     }

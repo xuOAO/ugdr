@@ -2,17 +2,17 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F04",
-  "step": "F04-S02",
+  "step": "F04-S03",
   "state": "completed",
   "next_actions": {
     "F04": [
       {
-        "step": "F04-S03",
-        "action": "CQ 生产与 polling 快路径"
+        "step": "F04-S04",
+        "action": "Mock Worker 与 completion"
       }
     ]
   },
   "blockers": [],
-  "updated_at": "2026-07-22T09:02:41+08:00",
+  "updated_at": "2026-07-22T09:49:12+08:00",
   "updated_by": "human"
 }

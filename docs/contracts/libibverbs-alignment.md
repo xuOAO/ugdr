@@ -57,7 +57,7 @@ Status meanings:
 | `ugdr_dereg_mr` | `ibv_dereg_mr` | UGDR strict guarantee | Deregistration invalidates the handle. UGDR deterministically returns `EBUSY` while an accepted incomplete WR references the MR. |
 | `ugdr_create_cq` | `ibv_create_cq` | aligned | The five-argument shape is preserved; v1 callers use a null event channel and completion vector 0. |
 | `ugdr_destroy_cq` | `ibv_destroy_cq` | aligned | Returns the errno value on failure and reports `EBUSY` while any QP references the CQ. |
-| `ugdr_poll_cq` | `ibv_poll_cq` | aligned | Uses the standard negative error domain and never writes `wc` on the current placeholder path. |
+| `ugdr_poll_cq` | `ibv_poll_cq` | aligned | Returns up to the requested number of oldest WCs, returns 0 when empty, uses the standard negative error domain, and does not modify output on failure. |
 | `ugdr_create_qp`, `ugdr_destroy_qp` | `ibv_create_qp`, `ibv_destroy_qp` | subset adaptation | Implemented RC-only creation uses a flattened init record. A QP owns SQ/RQ metadata, references each distinct CQ once, and shares one Context with its PD and CQs. Destroy removes those relationships and creates no completion. |
 | `ugdr_modify_qp`, `ugdr_query_qp` | `ibv_modify_qp`, `ibv_query_qp` | subset adaptation | Uses the standard direct errno return domain and aligned exposed mask bits, but only the reviewed state/access/retry subset is public. Invalid requests fail without changing state or outputs. |
 | `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Application exchange plus `ibv_modify_qp` transitions | UGDR extension | Query returns `qp_num`. Connect takes a const attribute record and requires timeout/retry/RNR/minimum-RNR masks before atomically staging INIT to RTR to RTS; it never advances the remote QP. |
