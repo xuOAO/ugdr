@@ -29,3 +29,5 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F04-S03 CQ 生产与 polling 快路径](F04_SQ、RQ、CQ_队列系统/F04-S03_CQ_生产与_polling_快路径_步骤文档.md)
 - [F04-S04 Mock Worker 与 completion](F04_SQ、RQ、CQ_队列系统/F04-S04_Mock_Worker_与_completion_步骤文档.md)
 - [F04-S05 公开 API 集成与性能观测](F04_SQ、RQ、CQ_队列系统/F04-S05_公开_API_集成与性能观测_步骤文档.md)
+- [F05 Loop Worker 与本地 Datagram 数据路径功能文档](F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md)
+- [F05-S01 逻辑 Datagram 与 Local Transport](F05_Loop_Worker_与本地_Datagram_数据路径/F05-S01_逻辑_Datagram_与_Local_Transport_步骤文档.md)

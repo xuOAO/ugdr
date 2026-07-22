@@ -10,6 +10,11 @@
       "path": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
       "revision": 21,
       "body_sha256": "70b82f1700642152e5f03ea3be3b047aab5c7d976c3511a4a58e710c6aade09f"
+    },
+    {
+      "path": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
+      "revision": 26,
+      "body_sha256": "78d113d6a72518d1f4dbe205aa76926b01a18bcd53d519bab8858064542b813a"
     }
   ],
   "routes": [
@@ -158,6 +163,90 @@
       "feature": "F04",
       "step": "F04-S05",
       "source": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04_SQ、RQ、CQ_队列系统_功能文档.md",
+      "next_actions": {
+        "F05": [
+          {
+            "step": "F05-S01",
+            "action": "逻辑 Datagram 与 Local Transport"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F05",
+      "step": "F05-S01",
+      "source": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
+      "next_actions": {
+        "F05": [
+          {
+            "step": "F05-S02",
+            "action": "发送路径与 in-flight/ACK"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F05",
+      "step": "F05-S02",
+      "source": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
+      "next_actions": {
+        "F05": [
+          {
+            "step": "F05-S03",
+            "action": "接收路径、目标校验与 RNR"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F05",
+      "step": "F05-S03",
+      "source": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
+      "next_actions": {
+        "F05": [
+          {
+            "step": "F05-S04",
+            "action": "接收端异步执行与 ACK 完成状态机"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F05",
+      "step": "F05-S04",
+      "source": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
+      "next_actions": {
+        "F05": [
+          {
+            "step": "F05-S05",
+            "action": "双 Worker 确定性语义测试"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F05",
+      "step": "F05-S05",
+      "source": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
+      "next_actions": {
+        "F05": [
+          {
+            "step": "F05-S06",
+            "action": "双线程 bench 与性能观测"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F05",
+      "step": "F05-S06",
+      "source": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
       "next_actions": {}
     }
   ]
