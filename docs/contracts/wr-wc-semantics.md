@@ -4,6 +4,7 @@ Sources:
 
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
 - [reviewed F04-S02 revision 9](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md)
+- [reviewed F04-S04 revision 16](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S04_Mock_Worker_与_completion_步骤文档.md)
 
 This contract fixes the Client-visible v1 MR key, SGE, Send/Receive WR, WC, posting, signaling,
 ordering, RNR, error, flush, polling, and destruction semantics for RC RDMA Write and RDMA Write
@@ -116,6 +117,12 @@ failure explicitly prevents the operation.
 
 `ugdr_post_send` and `ugdr_post_recv` implement the posting rules above. F04-S03 implements owner
 CQE transport and `ugdr_poll_cq`: an empty CQ returns 0, a successful poll removes the oldest
-available WCs, and failures do not modify output. These steps still do not consume posted
-descriptors, hold MR references, execute RDMA operations, change payload memory, or decide when a
-completion is generated; polling must not simulate a completion or successful data operation.
+available WCs, and failures do not modify output. F04-S04 adds a test-only, explicitly progressed
+Mock Worker fixture that checks descriptor consumption, signaling, Write With Immediate receive
+notification, CQ backpressure, ERR flush, teardown, and lifecycle-callback ordering. It is not
+linked into the daemon or any production target and does not access payload memory.
+
+The daemon still does not consume posted descriptors or execute RDMA operations. Real MR reference
+protection and `ugdr_dereg_mr` `EBUSY` behavior, execution-error handling, RNR/retry, payload
+movement, and successful remote-visibility guarantees remain unimplemented; Mock completion must
+not be interpreted as a real data operation.
