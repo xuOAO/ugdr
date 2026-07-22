@@ -119,6 +119,8 @@ target_link_libraries(ugdr_daemon
 )
 
 enable_testing()
+add_subdirectory(tests/support)
+add_subdirectory(benchmarks)
 add_subdirectory(tests/unit)
 add_subdirectory(tests/integration)
 add_subdirectory(tests/smoke)

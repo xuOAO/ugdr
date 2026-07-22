@@ -5,6 +5,7 @@ Sources:
 - [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
 - [reviewed F04-S02 revision 9](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md)
 - [reviewed F04-S04 revision 16](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S04_Mock_Worker_与_completion_步骤文档.md)
+- [reviewed F04-S05 revision 12](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S05_公开_API_集成与性能观测_步骤文档.md)
 
 This contract fixes the Client-visible v1 MR key, SGE, Send/Receive WR, WC, posting, signaling,
 ordering, RNR, error, flush, polling, and destruction semantics for RC RDMA Write and RDMA Write
@@ -121,6 +122,14 @@ available WCs, and failures do not modify output. F04-S04 adds a test-only, expl
 Mock Worker fixture that checks descriptor consumption, signaling, Write With Immediate receive
 notification, CQ backpressure, ERR flush, teardown, and lifecycle-callback ordering. It is not
 linked into the daemon or any production target and does not access payload memory.
+
+F04-S05 extracts that fixture into the test-only `ugdr_test_support` target and verifies the
+complete public `ugdr_post_send`/`ugdr_post_recv` → explicit Mock progress → `ugdr_poll_cq`
+metadata path across independent Client and daemon test processes. The deterministic integration
+test covers same- and different-CQ routing, RQ/CQ backpressure recovery, concurrent post/poll,
+public error domains, ERR flush, setup/teardown-only control requests, and warmed allocation
+counts. Separate non-CTest Release benchmarks observe metadata throughput and latency without
+turning environment-dependent results into an acceptance threshold.
 
 The daemon still does not consume posted descriptors or execute RDMA operations. Real MR reference
 protection and `ugdr_dereg_mr` `EBUSY` behavior, execution-error handling, RNR/retry, payload

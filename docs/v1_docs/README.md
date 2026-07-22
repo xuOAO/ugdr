@@ -28,3 +28,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F04-S02 SQ、RQ posting 快路径](F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md)
 - [F04-S03 CQ 生产与 polling 快路径](F04_SQ、RQ、CQ_队列系统/F04-S03_CQ_生产与_polling_快路径_步骤文档.md)
 - [F04-S04 Mock Worker 与 completion](F04_SQ、RQ、CQ_队列系统/F04-S04_Mock_Worker_与_completion_步骤文档.md)
+- [F04-S05 公开 API 集成与性能观测](F04_SQ、RQ、CQ_队列系统/F04-S05_公开_API_集成与性能观测_步骤文档.md)

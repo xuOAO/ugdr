@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <thread>
 
 namespace {
 
@@ -62,7 +63,13 @@ bool run(std::uint32_t batch_size) {
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start);
     const double descriptors_per_second =
         static_cast<double>(iterations * batch_size) / elapsed.count();
-    std::printf("batch=%u descriptors_per_second=%.0f\n", batch_size, descriptors_per_second);
+    std::printf(
+        "benchmark=wr_posting build_type=%s cpu_threads=%u batch=%u iterations=%llu "
+        "completed_wr=%llu MWR_per_s=%.3f descriptors_per_second=%.0f\n",
+        UGDR_BENCHMARK_BUILD_TYPE, std::thread::hardware_concurrency(), batch_size,
+        static_cast<unsigned long long>(iterations),
+        static_cast<unsigned long long>(iterations * batch_size),
+        descriptors_per_second / 1'000'000.0, descriptors_per_second);
     return true;
 }
 

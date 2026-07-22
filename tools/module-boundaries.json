@@ -22,6 +22,15 @@
     "src/gpu/cuda_ipc_memory.cu",
     "apps/client",
     "apps/daemon",
+    "benchmarks",
+    "benchmarks/CMakeLists.txt",
+    "benchmarks/shared_ring_benchmark.cpp",
+    "benchmarks/wr_posting_benchmark.cpp",
+    "benchmarks/queue_metadata_benchmark.cpp",
+    "tests/support",
+    "tests/support/CMakeLists.txt",
+    "tests/support/mock_worker_fixture.hpp",
+    "tests/support/mock_worker_fixture.cpp",
     "tests/unit",
     "tests/unit/api_contract_c_test.c",
     "tests/unit/api_contract_test.cpp",
@@ -32,7 +41,6 @@
     "tests/unit/device_context_test.cpp",
     "tests/unit/pd_mr_cq_test.cpp",
     "tests/unit/shared_ring_test.cpp",
-    "tests/unit/shared_ring_benchmark.cpp",
     "tests/__init__.py",
     "tests/integration",
     "tests/integration/__init__.py",
@@ -42,6 +50,7 @@
     "tests/integration/pd_mr_cq_client_server_test.cpp",
     "tests/integration/cuda_ipc_mr_test.cpp",
     "tests/integration/shared_queue_mapping_test.cpp",
+    "tests/integration/queue_api_client_server_test.cpp",
     "tests/integration/test_ugdr_environment.py",
     "tests/integration/test_ugdr_quality.py",
     "tests/integration/test_ugdr_workflow.py",
@@ -88,6 +97,14 @@
     {
       "path": "apps",
       "responsibility": "可执行程序入口与组合根"
+    },
+    {
+      "path": "benchmarks",
+      "responsibility": "非 CTest 的显式 Release 性能观测程序"
+    },
+    {
+      "path": "tests/support",
+      "responsibility": "仅供测试和 benchmark 复用的非生产 fixture"
     },
     {
       "path": "tests/unit",
