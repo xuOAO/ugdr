@@ -61,8 +61,8 @@ listed in [WR/WC and Completion Semantics](wr-wc-semantics.md). In particular, C
 ## Functions and current results
 
 All functions remain linkable. Control operations use the daemon IPC path. F04-S02 makes WR
-posting a Client-side shared-memory path; WC polling and worker execution retain their reviewed
-placeholders.
+posting a Client-side shared-memory path, and F04-S03 makes CQ polling a Client-side shared-memory
+path. Worker execution retains its reviewed placeholder.
 
 | Function group | Public functions | Current result |
 |-|-|-|
@@ -70,7 +70,7 @@ placeholders.
 | Context | `ugdr_open_device`, `ugdr_close_device` | Open creates a session-owned daemon Context from a live Device. Close returns 0 on success; invalid/stale/repeated handles return `-1` with `errno=EINVAL`, while live children produce `EBUSY` without state change. |
 | PD | `ugdr_alloc_pd`, `ugdr_dealloc_pd` | Allocate creates a Context child. Deallocate returns 0 only when no MR exists; live children return `EBUSY`, while invalid, stale, or repeated handles return `EINVAL`. |
 | MR | `ugdr_reg_mr`, `ugdr_dereg_mr` | Register accepts a nonempty range inside a `cudaMalloc` device allocation, returns the Client address snapshot and direct nonzero `lkey`/`rkey`, and reports pointer failures through `errno`. Remote Write requires Local Write. Host, managed, array, VMM, or otherwise unsupported memory returns `EOPNOTSUPP`; malformed ranges and access return `EINVAL`. Deregister closes the daemon IPC mapping before invalidating the handle and keys. |
-| CQ | `ugdr_create_cq`, `ugdr_destroy_cq`, `ugdr_poll_cq` | Create requires `cqe > 0`, null channel, and completion vector 0. Destroy enforces strict references. Poll on a live CQ remains `-EOPNOTSUPP` and does not write `wc`; invalid CQ handles return `-EINVAL`. |
+| CQ | `ugdr_create_cq`, `ugdr_destroy_cq`, `ugdr_poll_cq` | Create requires `cqe > 0`, null channel, and completion vector 0. Destroy enforces strict references. Poll removes up to `num_entries` oldest WCs, returns 0 for an empty CQ, and uses negative errno values on failure without modifying output; invalid CQ handles return `-EINVAL`. |
 | QP | `ugdr_create_qp`, `ugdr_destroy_qp`, `ugdr_modify_qp`, `ugdr_query_qp` | Create returns a RESET RC QP with a daemon-lifetime-unique QPN. Modify supports RESET→INIT and RESET/INIT/RTR/RTS→ERR. Query returns one state/access/retry snapshot plus creation attributes. Failures preserve state and outputs. |
 | Connection extension | `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Query returns the local QPN. Connect resolves a live same-daemon remote QPN and atomically commits the local peer, retry fields, and RTS state; it never modifies the remote QP. |
 | WR posting | `ugdr_post_send`, `ugdr_post_recv` | Copy accepted WR/SGE descriptors into the QP-owned SQ/RQ in linked-list order. Send requires RTS; Receive accepts INIT/RTR/RTS. Invalid structure or state returns `EINVAL`; capacity exhaustion returns `ENOMEM`; `*bad_wr` identifies the first unaccepted WR and an accepted prefix is retained. The path performs no IPC, syscall, or heap allocation per WR. |
@@ -82,6 +82,7 @@ their corresponding libibverbs APIs do.
 ## Explicit non-capabilities
 
 F04-S02 accepts descriptors into shared SQ/RQ storage but does not consume WQEs, resolve lkey/rkey
-or address ranges, retain MR references, produce WCs, run a worker, or move application payloads.
-`ugdr_poll_cq` therefore remains a placeholder. Execution-time validation, MR busy protection, ERR
-flush, completion production, and network transport remain owned by later reviewed steps.
+or address ranges, retain MR references, run a worker, or move application payloads. F04-S03 can
+transport already-formed internal CQEs and poll them as WCs, but does not decide when a completion
+is generated. Execution-time validation, MR busy protection, signaling, ERR flush, completion
+generation, and network transport remain owned by later reviewed steps.

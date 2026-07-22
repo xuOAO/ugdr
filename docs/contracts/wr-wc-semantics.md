@@ -114,7 +114,8 @@ failure explicitly prevents the operation.
 
 ## Current implementation boundary
 
-`ugdr_post_send` and `ugdr_post_recv` implement the posting rules above. F04-S02 does not consume
-the posted descriptors, hold MR references, execute RDMA operations, change payload memory, or
-produce completions. `ugdr_poll_cq` returns `-EOPNOTSUPP` and does not modify any `ugdr_wc`; it must
-not simulate a completion or successful data operation.
+`ugdr_post_send` and `ugdr_post_recv` implement the posting rules above. F04-S03 implements owner
+CQE transport and `ugdr_poll_cq`: an empty CQ returns 0, a successful poll removes the oldest
+available WCs, and failures do not modify output. These steps still do not consume posted
+descriptors, hold MR references, execute RDMA operations, change payload memory, or decide when a
+completion is generated; polling must not simulate a completion or successful data operation.

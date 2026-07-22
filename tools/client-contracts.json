@@ -63,6 +63,10 @@
     {
       "path": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md",
       "revision": 9
+    },
+    {
+      "path": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S03_CQ_生产与_polling_快路径_步骤文档.md",
+      "revision": 5
     }
   ],
   "required_contracts": [

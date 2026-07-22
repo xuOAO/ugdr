@@ -15,6 +15,7 @@ find_package(Threads REQUIRED)
 find_library(CUDA_DRIVER_LIBRARY NAMES cuda REQUIRED)
 
 add_library(ugdr_queue STATIC
+    src/queue/completion_queue.cpp
     src/queue/shared_ring.cpp
 )
 target_include_directories(ugdr_queue
