@@ -197,9 +197,8 @@ int main() {
     const ugdr_send_wr expected_send_wr = send_wr;
     auto *bad_send = sentinel_pointer<ugdr_send_wr>(20);
     errno = 149;
-    if (ugdr_post_send(sentinel_pointer<ugdr_qp>(21), &send_wr, &bad_send) != EOPNOTSUPP ||
-        errno != 149 || bad_send != sentinel_pointer<ugdr_send_wr>(20) ||
-        !unchanged(send_wr, expected_send_wr)) {
+    if (ugdr_post_send(sentinel_pointer<ugdr_qp>(21), &send_wr, &bad_send) != EINVAL ||
+        errno != 149 || bad_send != &send_wr || !unchanged(send_wr, expected_send_wr)) {
         return 18;
     }
 
@@ -207,9 +206,8 @@ int main() {
     const ugdr_recv_wr expected_recv_wr = recv_wr;
     auto *bad_recv = sentinel_pointer<ugdr_recv_wr>(22);
     errno = 151;
-    if (ugdr_post_recv(sentinel_pointer<ugdr_qp>(23), &recv_wr, &bad_recv) != EOPNOTSUPP ||
-        errno != 151 || bad_recv != sentinel_pointer<ugdr_recv_wr>(22) ||
-        !unchanged(recv_wr, expected_recv_wr)) {
+    if (ugdr_post_recv(sentinel_pointer<ugdr_qp>(23), &recv_wr, &bad_recv) != EINVAL ||
+        errno != 151 || bad_recv != &recv_wr || !unchanged(recv_wr, expected_recv_wr)) {
         return 19;
     }
 

@@ -2,17 +2,17 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F04",
-  "step": "F04-S01",
+  "step": "F04-S02",
   "state": "completed",
   "next_actions": {
     "F04": [
       {
-        "step": "F04-S02",
-        "action": "SQ/RQ posting 快路径"
+        "step": "F04-S03",
+        "action": "CQ 生产与 polling 快路径"
       }
     ]
   },
   "blockers": [],
-  "updated_at": "2026-07-22T00:10:17+08:00",
+  "updated_at": "2026-07-22T09:02:41+08:00",
   "updated_by": "human"
 }

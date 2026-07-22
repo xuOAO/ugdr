@@ -133,7 +133,7 @@ bool invalid_query_preserves_outputs(ugdr_qp *qp) {
            std::memcmp(&creation, &expected_creation, sizeof(creation)) == 0;
 }
 
-bool unsupported_calls_preserve_outputs(ugdr_qp *qp, ugdr_cq *cq) {
+bool posting_and_poll_contract(ugdr_qp *qp, ugdr_cq *cq) {
     ugdr_wc completion{};
     completion.wr_id = 91;
     completion.vendor_err = 17;
@@ -152,10 +152,10 @@ bool unsupported_calls_preserve_outputs(ugdr_qp *qp, ugdr_cq *cq) {
 
     return ugdr_poll_cq(cq, 1, &completion) == -EOPNOTSUPP &&
            std::memcmp(&completion, &expected_completion, sizeof(completion)) == 0 &&
-           ugdr_post_send(qp, &send, &bad_send) == EOPNOTSUPP &&
+           ugdr_post_send(qp, &send, &bad_send) == 0 &&
            bad_send == reinterpret_cast<ugdr_send_wr *>(static_cast<std::uintptr_t>(1)) &&
            std::memcmp(&send, &expected_send, sizeof(send)) == 0 &&
-           ugdr_post_recv(qp, &recv, &bad_recv) == EOPNOTSUPP &&
+           ugdr_post_recv(qp, &recv, &bad_recv) == 0 &&
            bad_recv == reinterpret_cast<ugdr_recv_wr *>(static_cast<std::uintptr_t>(2)) &&
            std::memcmp(&recv, &expected_recv, sizeof(recv)) == 0;
 }
@@ -235,9 +235,9 @@ int client_main(const std::string &socket_path, int command_fd, int report_fd) {
             status = EPROTO;
         }
         ugdr_qp_state failed_connect_state = UGDR_QPS_UNKNOWN;
-        if (status == 0 && (query_state(new_qp, &failed_connect_state) != 0 ||
-                            failed_connect_state != UGDR_QPS_INIT ||
-                            !unsupported_calls_preserve_outputs(qp, send_cq))) {
+        if (status == 0 &&
+            (query_state(new_qp, &failed_connect_state) != 0 ||
+             failed_connect_state != UGDR_QPS_INIT || !posting_and_poll_contract(qp, send_cq))) {
             status = EPROTO;
         }
         if (new_qp != nullptr && ugdr_destroy_qp(new_qp) != 0 && status == 0) {

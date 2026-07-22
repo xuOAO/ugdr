@@ -1,10 +1,13 @@
 # WR/WC and Completion Semantics
 
-Source: [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md).
+Sources:
+
+- [reviewed F02-S04 revision 20](../v1_docs/F02_API_契约与对象模型/F02-S04_WR_WC_与完成语义契约_步骤文档.md)
+- [reviewed F04-S02 revision 9](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md)
 
 This contract fixes the Client-visible v1 MR key, SGE, Send/Receive WR, WC, posting, signaling,
 ordering, RNR, error, flush, polling, and destruction semantics for RC RDMA Write and RDMA Write
-With Immediate. F02 exposes linkable placeholders only; it does not create queues or move data.
+With Immediate. F04-S02 implements descriptor posting only; it does not execute work or move data.
 
 ## Public records
 
@@ -33,10 +36,18 @@ domain.
 | Entire linked list accepted | Return 0. The value of `bad_wr` is undefined; callers must not require it to be cleared. | Every WR is accepted in linked-list order. |
 | First immediately detectable invalid WR | Return `EINVAL`; `*bad_wr` points to that WR. | The successful prefix remains accepted. The failing WR and its successors are not accepted. |
 | SQ or RQ cannot accept the current WR | Return `ENOMEM`; `*bad_wr` points to that WR. | The successful prefix remains accepted; there is no rollback. |
-| F02 placeholder | Return `EOPNOTSUPP`. | No WR is consumed and the caller's `bad_wr` value is unchanged. |
 
 Immediate validation includes null required pointers, unknown opcode or flag bits, negative
-`num_sge`, SGE counts above QP capability, and a QP state that does not permit posting.
+`num_sge`, a positive SGE count with a null list, SGE counts above QP capability, and a QP state
+that does not permit posting. Send posting requires RTS. Receive posting is valid in INIT, RTR, and
+RTS; a zero-SGE Receive WR is valid. lkey, rkey, address, range, and access checks are deferred to
+worker execution and are not posting failures.
+
+One per-QP posting mutex serializes the complete linked-list operation so the underlying queue
+retains its SPSC producer contract. Concurrent posting to different QPs is independent. Accepted
+descriptors contain copied scalar fields and copied SGEs, never Client WR/SGE pointers. A normal
+Write stores immediate data as zero; Write With Immediate preserves the supplied network-order
+value.
 
 WR records and SGE arrays need remain valid only until the post call returns because the
 implementation must copy accepted descriptors. A non-inline data buffer remains valid until its WR
@@ -101,8 +112,9 @@ failure explicitly prevents the operation.
 - `ugdr_dereg_mr` returns `EBUSY` while an accepted incomplete WR references the MR. This
   deterministic protection is a UGDR strict guarantee stronger than libibverbs.
 
-## F02 placeholder
+## Current implementation boundary
 
-`ugdr_post_send` and `ugdr_post_recv` return `EOPNOTSUPP`, consume no WR, and do not modify
-`bad_wr`. `ugdr_poll_cq` returns `-EOPNOTSUPP` and does not modify any `ugdr_wc`. These placeholders
-must not simulate a queue, completion, or successful data operation.
+`ugdr_post_send` and `ugdr_post_recv` implement the posting rules above. F04-S02 does not consume
+the posted descriptors, hold MR references, execute RDMA operations, change payload memory, or
+produce completions. `ugdr_poll_cq` returns `-EOPNOTSUPP` and does not modify any `ugdr_wc`; it must
+not simulate a completion or successful data operation.

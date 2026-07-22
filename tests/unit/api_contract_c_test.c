@@ -78,10 +78,8 @@ int main(void) {
         ugdr_connect_qp(0, &info, &attr, UGDR_QP_TIMEOUT) != EINVAL) {
         return 9;
     }
-    if (ugdr_post_send(0, &send_wr, &bad_send) != EOPNOTSUPP ||
-        bad_send != (struct ugdr_send_wr *)(uintptr_t)1 ||
-        ugdr_post_recv(0, &recv_wr, &bad_recv) != EOPNOTSUPP ||
-        bad_recv != (struct ugdr_recv_wr *)(uintptr_t)2) {
+    if (ugdr_post_send(0, &send_wr, &bad_send) != EINVAL || bad_send != &send_wr ||
+        ugdr_post_recv(0, &recv_wr, &bad_recv) != EINVAL || bad_recv != &recv_wr) {
         return 10;
     }
 

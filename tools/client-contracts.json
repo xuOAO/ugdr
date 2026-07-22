@@ -55,6 +55,14 @@
     {
       "path": "docs/v1_docs/F03_Daemon_控制面与对象生命周期/F03-S05_QP_查询、状态转换与原子建连_步骤文档.md",
       "revision": 13
+    },
+    {
+      "path": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S01_共享队列与映射边界_步骤文档.md",
+      "revision": 12
+    },
+    {
+      "path": "docs/v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md",
+      "revision": 9
     }
   ],
   "required_contracts": [
