@@ -10,6 +10,9 @@ Sources:
 - [reviewed F03-S04 revision 7](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
 - [reviewed F04-S01 revision 12](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S01_共享队列与映射边界_步骤文档.md)
 - [reviewed F04-S02 revision 9](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md)
+- [reviewed F04-S03 revision 5](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S03_CQ_生产与_polling_快路径_步骤文档.md)
+- [reviewed F04-S04 revision 16](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S04_Mock_Worker_与_completion_步骤文档.md)
+- [reviewed F04-S05 revision 12](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S05_公开_API_集成与性能观测_步骤文档.md)
 
 `include/ugdr/api.hpp` exposes C-linkage `ugdr_*` symbols and C-compatible declarations. F02-S01
 freezes the symbol and type names needed by the v1 Client; F02-S03 defines the initial public QP
@@ -62,7 +65,9 @@ listed in [WR/WC and Completion Semantics](wr-wc-semantics.md). In particular, C
 
 All functions remain linkable. Control operations use the daemon IPC path. F04-S02 makes WR
 posting a Client-side shared-memory path, and F04-S03 makes CQ polling a Client-side shared-memory
-path. Worker execution retains its reviewed placeholder.
+path. F04-S05 verifies those public entry points end to end across independent Client and daemon
+test processes using an explicitly progressed test-only Mock Worker. Production Worker execution
+retains its reviewed placeholder.
 
 | Function group | Public functions | Current result |
 |-|-|-|
@@ -81,8 +86,10 @@ their corresponding libibverbs APIs do.
 
 ## Explicit non-capabilities
 
-F04-S02 accepts descriptors into shared SQ/RQ storage but does not consume WQEs, resolve lkey/rkey
-or address ranges, retain MR references, run a worker, or move application payloads. F04-S03 can
-transport already-formed internal CQEs and poll them as WCs, but does not decide when a completion
-is generated. Execution-time validation, MR busy protection, signaling, ERR flush, completion
-generation, and network transport remain owned by later reviewed steps.
+F04-S02 accepts descriptors into shared SQ/RQ storage, and F04-S03 transports already-formed
+internal CQEs and polls them as WCs. F04-S04/S05 provide deterministic test-only Mock consumption,
+signaling, receive notification, CQ backpressure, ERR flush, and full public post/poll integration;
+the fixture is never linked into a production target and never accesses payload. Production
+descriptor consumption, lkey/rkey and range validation, real MR references, RNR/retry, payload
+movement, remote visibility, execution-error completion generation, and network transport remain
+owned by later reviewed features.

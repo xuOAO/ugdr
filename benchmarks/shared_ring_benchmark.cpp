@@ -102,8 +102,13 @@ int run(std::uint32_t batch_size) {
     const double seconds = std::chrono::duration<double>(end - begin).count();
     const double descriptors_per_second = static_cast<double>(kIterations) / seconds;
     const double minimum_payload = 50'000'000'000.0 / descriptors_per_second;
-    std::cout << "batch=" << batch_size << " descriptors_per_second=" << std::fixed
-              << std::setprecision(0) << descriptors_per_second
+    std::cout << "benchmark=shared_ring"
+              << " build_type=" << UGDR_BENCHMARK_BUILD_TYPE
+              << " cpu_threads=" << std::thread::hardware_concurrency()
+              << " batch=" << batch_size << " iterations=" << kIterations / batch_size
+              << " completed_wr=" << kIterations << " MWR_per_s=" << std::fixed
+              << std::setprecision(3) << descriptors_per_second / 1'000'000.0
+              << " descriptors_per_second=" << std::setprecision(0) << descriptors_per_second
               << " minimum_bytes_for_400Gbps=" << std::setprecision(1) << minimum_payload << '\n';
     return 0;
 }

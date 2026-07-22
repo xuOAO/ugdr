@@ -108,6 +108,26 @@ add_test(
     COMMAND ugdr_cq_polling_client_server_test
 )
 
+add_executable(ugdr_queue_api_client_server_test
+    queue_api_client_server_test.cpp
+)
+target_link_libraries(ugdr_queue_api_client_server_test
+    PRIVATE
+        Threads::Threads
+        ugdr_control
+        ugdr_ipc
+        ugdr_test_support
+)
+add_test(
+    NAME ugdr_queue_api_client_server
+    COMMAND ugdr_queue_api_client_server_test
+)
+set_tests_properties(
+    ugdr_queue_api_client_server
+    PROPERTIES
+        TIMEOUT 30
+)
+
 add_executable(ugdr_control_plane_acceptance_test
     control_plane_acceptance_test.cpp
 )

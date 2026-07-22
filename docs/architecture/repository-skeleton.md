@@ -14,9 +14,12 @@ F03-S03 adds PD/MR/CQ lifecycle, daemon key lookup, and UUID-routed CUDA IPC map
 uses the control boundary without depending directly on the generic IPC layer and uses `ugdr_gpu`
 only for Client-side CUDA allocation export.
 
-F04-S01 adds `ugdr_queue` as the shared data-plane layout boundary. It owns versioned SPSC ring
-memory, descriptor slots, and mapping validation; `ugdr_control` only creates and transfers those
-mappings, while public post and poll operations remain outside this step.
+F04 adds `ugdr_queue` as the shared data-plane layout boundary. It owns versioned SPSC ring
+memory, descriptor slots, and mapping validation; `ugdr_control` creates and transfers those
+mappings, while `ugdr_api` performs public post and poll directly against them. F04-S05 keeps the
+deterministic Mock Worker in `tests/support`, registers correctness coverage from `tests/unit`
+and `tests/integration`, and places non-gating Release observations in `benchmarks`. None of
+these test or benchmark targets is a production target or dependency.
 
 <!-- BEGIN GENERATED: module-boundaries -->
 ## Repository areas
@@ -26,6 +29,8 @@ mappings, while public post and poll operations remain outside this step.
 | `include/ugdr` | 对外公共声明 |
 | `src` | 生产库实现，按模块目录隔离 |
 | `apps` | 可执行程序入口与组合根 |
+| `benchmarks` | 非 CTest 的显式 Release 性能观测程序 |
+| `tests/support` | 仅供测试和 benchmark 复用的非生产 fixture |
 | `tests/unit` | 模块级单元测试 |
 | `tests/integration` | 跨模块与边界集成测试 |
 | `tests/smoke` | 仓库主路径最小运行检查 |

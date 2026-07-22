@@ -1,0 +1,43 @@
+add_executable(ugdr_shared_ring_benchmark
+    shared_ring_benchmark.cpp
+)
+target_link_libraries(ugdr_shared_ring_benchmark
+    PRIVATE
+        Threads::Threads
+        ugdr_queue
+)
+
+add_executable(ugdr_wr_posting_benchmark
+    wr_posting_benchmark.cpp
+)
+target_include_directories(ugdr_wr_posting_benchmark
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_wr_posting_benchmark
+    PRIVATE
+        ugdr_api
+        ugdr_queue
+)
+
+add_executable(ugdr_queue_metadata_benchmark
+    queue_metadata_benchmark.cpp
+)
+target_include_directories(ugdr_queue_metadata_benchmark
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_queue_metadata_benchmark
+    PRIVATE
+        ugdr_test_support
+)
+
+foreach(target
+        ugdr_shared_ring_benchmark
+        ugdr_wr_posting_benchmark
+        ugdr_queue_metadata_benchmark)
+    target_compile_definitions(${target}
+        PRIVATE
+            UGDR_BENCHMARK_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+    )
+endforeach()

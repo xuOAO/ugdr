@@ -126,38 +126,15 @@ add_executable(ugdr_mock_worker_test
 )
 target_include_directories(ugdr_mock_worker_test
     PRIVATE
-        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
 )
 target_link_libraries(ugdr_mock_worker_test
     PRIVATE
-        ugdr_api
-        ugdr_queue
+        ugdr_test_support
 )
 add_test(
     NAME ugdr_mock_worker
     COMMAND ugdr_mock_worker_test
-)
-
-add_executable(ugdr_wr_posting_benchmark
-    wr_posting_benchmark.cpp
-)
-target_include_directories(ugdr_wr_posting_benchmark
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/src
-)
-target_link_libraries(ugdr_wr_posting_benchmark
-    PRIVATE
-        ugdr_api
-        ugdr_queue
-)
-
-add_executable(ugdr_shared_ring_benchmark
-    shared_ring_benchmark.cpp
-)
-target_link_libraries(ugdr_shared_ring_benchmark
-    PRIVATE
-        Threads::Threads
-        ugdr_queue
 )
 
 add_executable(ugdr_api_contract_c
