@@ -69,6 +69,7 @@ target_link_libraries(ugdr_control
 )
 
 add_library(ugdr_worker STATIC
+    src/worker/local_transport.cpp
     src/worker/worker.cpp
 )
 target_include_directories(ugdr_worker

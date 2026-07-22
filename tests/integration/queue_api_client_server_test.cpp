@@ -136,8 +136,8 @@ class ProgressingService final : public ugdr::control::ControlService {
     };
 
     struct QpObserver {
-        std::uint64_t identity = 0;
         ugdr::test::MockQp mock;
+        std::uint64_t identity = 0;
         bool live = true;
     };
 
