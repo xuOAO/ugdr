@@ -153,6 +153,25 @@ add_test(
     COMMAND ugdr_local_transport_test
 )
 
+add_executable(ugdr_loop_worker_test
+    loop_worker_test.cpp
+)
+target_include_directories(ugdr_loop_worker_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(ugdr_loop_worker_test
+    PRIVATE
+        ugdr_control
+        ugdr_test_support
+        ugdr_worker
+)
+add_test(
+    NAME ugdr_loop_worker
+    COMMAND ugdr_loop_worker_test
+)
+
 add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )

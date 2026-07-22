@@ -74,6 +74,7 @@ add_library(ugdr_worker STATIC
 )
 target_include_directories(ugdr_worker
     PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
         ${PROJECT_SOURCE_DIR}/src
 )
 target_link_libraries(ugdr_worker

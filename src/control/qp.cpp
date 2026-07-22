@@ -470,6 +470,7 @@ ControlServiceResult QpService::handle_create_qp(ipc::SessionId session_id,
     }
 
     QpRecord record;
+    record.owner_session = session_id;
     record.context_identity = pd->context_identity;
     record.pd_identity = request.value.object_identity;
     record.send_cq_identity = attributes.send_cq_identity;
@@ -711,6 +712,32 @@ void QpService::on_disconnect(ipc::SessionId session_id) noexcept {
 
 std::size_t QpService::qp_count() const noexcept {
     return qps_.size();
+}
+
+int QpService::worker_qp_view(std::uint32_t qp_num, WorkerQpView *view) noexcept {
+    if (qp_num == 0 || view == nullptr) {
+        return EINVAL;
+    }
+    const auto indexed = qp_num_index_.find(qp_num);
+    if (indexed == qp_num_index_.end()) {
+        return ENOENT;
+    }
+    QpRecord *const qp = qps_.resolve_any(indexed->second);
+    if (qp == nullptr) {
+        return ENOENT;
+    }
+    CqRecord *const send_cq = resolve_cq(qp->owner_session, qp->send_cq_identity);
+    CqRecord *const receive_cq = resolve_cq(qp->owner_session, qp->recv_cq_identity);
+    if (send_cq == nullptr || receive_cq == nullptr) {
+        return EINVAL;
+    }
+    *view = {
+        qp->owner_session,     qp->pd_identity,          qp->qp_num,
+        qp->peer_qp_num,       qp->sq.max_sge,           qp->rq.max_sge,
+        qp->sq_sig_all,        &qp->send_queue,          &qp->receive_queue,
+        &send_cq->completions, &receive_cq->completions,
+    };
+    return 0;
 }
 
 int client_create_qp(ControlClient &client, std::uint64_t pd_identity,
