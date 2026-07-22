@@ -73,6 +73,7 @@ struct QpSnapshot {
 };
 
 struct QpRecord {
+    ipc::SessionId owner_session = 0;
     std::uint64_t context_identity = 0;
     std::uint64_t pd_identity = 0;
     std::uint64_t send_cq_identity = 0;
@@ -92,6 +93,20 @@ struct QpRecord {
     std::uint8_t min_rnr_timer = 0;
     queue::SharedRing send_queue;
     queue::SharedRing receive_queue;
+};
+
+struct WorkerQpView {
+    ipc::SessionId session_id = 0;
+    std::uint64_t pd_identity = 0;
+    std::uint32_t qp_num = 0;
+    std::uint32_t peer_qp_num = 0;
+    std::uint32_t max_send_sge = 0;
+    std::uint32_t max_recv_sge = 0;
+    std::uint32_t sq_sig_all = 0;
+    queue::SharedRing *send_queue = nullptr;
+    queue::SharedRing *receive_queue = nullptr;
+    queue::SharedRing *send_cq = nullptr;
+    queue::SharedRing *receive_cq = nullptr;
 };
 
 bool valid_qp_create_attributes(const QpCreateAttributes &attributes) noexcept;
@@ -118,6 +133,7 @@ class QpService final : public PdMrCqService {
     void on_disconnect(ipc::SessionId session_id) noexcept override;
 
     [[nodiscard]] std::size_t qp_count() const noexcept;
+    int worker_qp_view(std::uint32_t qp_num, WorkerQpView *view) noexcept;
 
   private:
     ControlServiceResult handle_create_qp(ipc::SessionId session_id,

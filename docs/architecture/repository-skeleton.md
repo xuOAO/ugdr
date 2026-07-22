@@ -51,7 +51,7 @@ these test or benchmark targets is a production target or dependency.
 | `ugdr_ipc` | `src/ipc` | 通用本机 IPC 协议、fd 传输与 client/server 封装 |
 | `ugdr_queue` | `src/queue` | 版本化共享 ring 布局、直接 descriptor slot 与跨进程 mapping 原语 |
 | `ugdr_control` | `src/control` | UGDR 控制语义 adapter、类型化对象注册表与 Device/Context 服务 |
-| `ugdr_worker` | `src/worker` | 数据面 Worker 占位 |
+| `ugdr_worker` | `src/worker` | Loop Worker 与 Local Transport 的有界数据面推进 |
 | `ugdr_gpu` | `src/gpu` | CUDA allocation 导出、per-GPU runtime context 与 IPC mapping backend |
 | `ugdr_client` | `apps/client` | 最小 Client 可执行文件 |
 | `ugdr_daemon` | `apps/daemon` | Control、Worker 与 GPU 的组合根 |

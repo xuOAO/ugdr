@@ -165,6 +165,34 @@ set_tests_properties(
         SKIP_RETURN_CODE 77
 )
 
+add_executable(ugdr_loop_worker_cuda_test
+    loop_worker_cuda_test.cpp
+)
+target_include_directories(ugdr_loop_worker_cuda_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(ugdr_loop_worker_cuda_test
+    PRIVATE
+        ugdr_api
+        ugdr_control
+        ugdr_gpu
+        ugdr_ipc
+        ugdr_test_support
+        ugdr_worker
+)
+add_test(
+    NAME ugdr_loop_worker_cuda
+    COMMAND ugdr_loop_worker_cuda_test
+)
+set_tests_properties(
+    ugdr_loop_worker_cuda
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30
+)
+
 add_test(
     NAME project_state_transition_matrix
     COMMAND

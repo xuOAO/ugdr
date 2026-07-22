@@ -258,7 +258,7 @@
     },
     "ugdr_worker": {
       "path": "src/worker",
-      "responsibility": "数据面 Worker 占位"
+      "responsibility": "Loop Worker 与 Local Transport 的有界数据面推进"
     },
     "ugdr_gpu": {
       "path": "src/gpu",
