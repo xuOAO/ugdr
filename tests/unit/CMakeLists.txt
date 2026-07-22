@@ -92,6 +92,36 @@ add_test(
     COMMAND ugdr_shared_ring_test
 )
 
+add_executable(ugdr_wr_posting_test
+    wr_posting_test.cpp
+)
+target_include_directories(ugdr_wr_posting_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_wr_posting_test
+    PRIVATE
+        ugdr_api
+        ugdr_queue
+)
+add_test(
+    NAME ugdr_wr_posting
+    COMMAND ugdr_wr_posting_test
+)
+
+add_executable(ugdr_wr_posting_benchmark
+    wr_posting_benchmark.cpp
+)
+target_include_directories(ugdr_wr_posting_benchmark
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_wr_posting_benchmark
+    PRIVATE
+        ugdr_api
+        ugdr_queue
+)
+
 add_executable(ugdr_shared_ring_benchmark
     shared_ring_benchmark.cpp
 )

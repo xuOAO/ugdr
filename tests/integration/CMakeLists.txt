@@ -77,6 +77,21 @@ add_test(
     COMMAND ugdr_qp_client_server_test
 )
 
+add_executable(ugdr_qp_posting_client_server_test
+    qp_posting_client_server_test.cpp
+)
+target_link_libraries(ugdr_qp_posting_client_server_test
+    PRIVATE
+        Threads::Threads
+        ugdr_api
+        ugdr_control
+        ugdr_ipc
+)
+add_test(
+    NAME ugdr_qp_posting_client_server
+    COMMAND ugdr_qp_posting_client_server_test
+)
+
 add_executable(ugdr_control_plane_acceptance_test
     control_plane_acceptance_test.cpp
 )

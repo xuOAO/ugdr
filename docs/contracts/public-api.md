@@ -8,12 +8,15 @@ Sources:
 - [reviewed F03-S02 revision 11](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S02_类型化_generation_handle_注册表与_Context_步骤文档.md)
 - [reviewed F03-S03 revision 13](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S03_PD、MR、CQ_元数据与严格生命周期_步骤文档.md)
 - [reviewed F03-S04 revision 7](../v1_docs/F03_Daemon_控制面与对象生命周期/F03-S04_QP、SQ、RQ_所有权与_CQ_关联_步骤文档.md)
+- [reviewed F04-S01 revision 12](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S01_共享队列与映射边界_步骤文档.md)
+- [reviewed F04-S02 revision 9](../v1_docs/F04_SQ、RQ、CQ_队列系统/F04-S02_SQ、RQ_posting_快路径_步骤文档.md)
 
 `include/ugdr/api.hpp` exposes C-linkage `ugdr_*` symbols and C-compatible declarations. F02-S01
 freezes the symbol and type names needed by the v1 Client; F02-S03 defines the initial public QP
 records; F02-S04 completes the MR, SGE, WR, WC, retry-attribute, and completion surface. F03-S03
-implements PD, CUDA-backed MR, and CQ control lifecycles, and F03-S04 implements QP creation and
-destruction without changing that public ABI.
+implements PD, CUDA-backed MR, and CQ control lifecycles, F03-S04 implements QP creation and
+destruction, and F04-S01/S02 add shared SQ/RQ storage and Client-side posting without changing that
+public ABI.
 
 ## Types
 
@@ -57,9 +60,9 @@ listed in [WR/WC and Completion Semantics](wr-wc-semantics.md). In particular, C
 
 ## Functions and current results
 
-All functions remain linkable. F03-S04 adds QP creation and destruction to the Device, Context, PD,
-CUDA-backed MR, and CQ control lifecycles already implemented through the daemon. QP state,
-connection, and data-path entry points retain their reviewed placeholders.
+All functions remain linkable. Control operations use the daemon IPC path. F04-S02 makes WR
+posting a Client-side shared-memory path; WC polling and worker execution retain their reviewed
+placeholders.
 
 | Function group | Public functions | Current result |
 |-|-|-|
@@ -70,7 +73,7 @@ connection, and data-path entry points retain their reviewed placeholders.
 | CQ | `ugdr_create_cq`, `ugdr_destroy_cq`, `ugdr_poll_cq` | Create requires `cqe > 0`, null channel, and completion vector 0. Destroy enforces strict references. Poll on a live CQ remains `-EOPNOTSUPP` and does not write `wc`; invalid CQ handles return `-EINVAL`. |
 | QP | `ugdr_create_qp`, `ugdr_destroy_qp`, `ugdr_modify_qp`, `ugdr_query_qp` | Create returns a RESET RC QP with a daemon-lifetime-unique QPN. Modify supports RESET→INIT and RESET/INIT/RTR/RTS→ERR. Query returns one state/access/retry snapshot plus creation attributes. Failures preserve state and outputs. |
 | Connection extension | `ugdr_query_qp_conn_info`, `ugdr_connect_qp` | Query returns the local QPN. Connect resolves a live same-daemon remote QPN and atomically commits the local peer, retry fields, and RTS state; it never modifies the remote QP. |
-| WR posting | `ugdr_post_send`, `ugdr_post_recv` | Return `EOPNOTSUPP`; do not consume any WR and do not change `bad_wr`. |
+| WR posting | `ugdr_post_send`, `ugdr_post_recv` | Copy accepted WR/SGE descriptors into the QP-owned SQ/RQ in linked-list order. Send requires RTS; Receive accepts INIT/RTR/RTS. Invalid structure or state returns `EINVAL`; capacity exhaustion returns `ENOMEM`; `*bad_wr` identifies the first unaccepted WR and an accepted prefix is retained. The path performs no IPC, syscall, or heap allocation per WR. |
 
 Except for pointer-returning functions, `ugdr_close_device`, the negative error domain of
 `ugdr_poll_cq`, and the void `ugdr_free_device_list`, integer APIs return an errno value directly as
@@ -78,7 +81,7 @@ their corresponding libibverbs APIs do.
 
 ## Explicit non-capabilities
 
-F03-S04 stores SQ/RQ capacities as QP-owned metadata but does not allocate queue storage, accept
-WRs, produce WCs, run a worker, or move application payloads. QP transitions, endpoint resolution,
-WR consumption, WC production, and network transport remain placeholders until their owning
-reviewed steps.
+F04-S02 accepts descriptors into shared SQ/RQ storage but does not consume WQEs, resolve lkey/rkey
+or address ranges, retain MR references, produce WCs, run a worker, or move application payloads.
+`ugdr_poll_cq` therefore remains a placeholder. Execution-time validation, MR busy protection, ERR
+flush, completion production, and network transport remain owned by later reviewed steps.

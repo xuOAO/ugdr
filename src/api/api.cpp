@@ -1,5 +1,6 @@
 #include "ugdr/api.hpp"
 
+#include "api/wr_posting.hpp"
 #include "control/device_context.hpp"
 #include "control/pd_mr_cq.hpp"
 #include "control/qp.hpp"
@@ -13,6 +14,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -53,7 +55,9 @@ struct ugdr_qp {
     ugdr_qp_init_attr init_attr{};
     std::uint64_t daemon_identity = 0;
     std::uint64_t connection_epoch = 0;
+    ugdr_qp_state cached_state = UGDR_QPS_RESET;
     bool live = false;
+    std::mutex posting_mutex;
     ugdr::queue::SharedRing send_queue;
     ugdr::queue::SharedRing receive_queue;
 };
@@ -468,10 +472,12 @@ class ClientRuntime {
         qp->init_attr = *init_attr;
         qp->daemon_identity = identity;
         qp->connection_epoch = epoch;
+        qp->cached_state = UGDR_QPS_RESET;
         qp->live = true;
         ugdr_qp *const result = qp.get();
         try {
             qp_storage_.push_back(std::move(qp));
+            std::unique_lock registry_lock(qp_registry_mutex_);
             qps_.insert(result);
         } catch (...) {
             result->live = false;
@@ -483,7 +489,11 @@ class ClientRuntime {
 
     int destroy_qp(ugdr_qp *qp) {
         std::lock_guard lock(mutex_);
-        if (qps_.find(qp) == qps_.end() || !qp->live) {
+        if (qps_.find(qp) == qps_.end()) {
+            return EINVAL;
+        }
+        std::lock_guard posting_lock(qp->posting_mutex);
+        if (!qp->live) {
             return EINVAL;
         }
         const int connect_status = ensure_connected();
@@ -507,7 +517,11 @@ class ClientRuntime {
 
     int modify_qp(ugdr_qp *qp, const ugdr_qp_attr *attr, int attr_mask) {
         std::lock_guard lock(mutex_);
-        if (qps_.find(qp) == qps_.end() || !qp->live || attr == nullptr || attr_mask < 0) {
+        if (qps_.find(qp) == qps_.end() || attr == nullptr || attr_mask < 0) {
+            return EINVAL;
+        }
+        std::lock_guard posting_lock(qp->posting_mutex);
+        if (!qp->live) {
             return EINVAL;
         }
         const int connect_status = ensure_connected();
@@ -528,14 +542,23 @@ class ClientRuntime {
         attributes.retry_count = attr->retry_cnt;
         attributes.rnr_retry = attr->rnr_retry;
         attributes.min_rnr_timer = attr->min_rnr_timer;
-        return ugdr::control::client_modify_qp(client_, qp->daemon_identity, attributes,
-                                               static_cast<std::uint32_t>(attr_mask));
+        const int status = ugdr::control::client_modify_qp(client_, qp->daemon_identity, attributes,
+                                                           static_cast<std::uint32_t>(attr_mask));
+        if (status == 0 &&
+            (static_cast<std::uint32_t>(attr_mask) & ugdr::control::kQpMaskState) != 0) {
+            qp->cached_state = attr->qp_state;
+        }
+        return status;
     }
 
     int query_qp(ugdr_qp *qp, ugdr_qp_attr *attr, int attr_mask, ugdr_qp_init_attr *init_attr) {
         std::lock_guard lock(mutex_);
-        if (qps_.find(qp) == qps_.end() || !qp->live || attr == nullptr || init_attr == nullptr ||
+        if (qps_.find(qp) == qps_.end() || attr == nullptr || init_attr == nullptr ||
             attr_mask < 0) {
+            return EINVAL;
+        }
+        std::lock_guard posting_lock(qp->posting_mutex);
+        if (!qp->live) {
             return EINVAL;
         }
         const int connect_status = ensure_connected();
@@ -558,6 +581,7 @@ class ClientRuntime {
         const auto mask = static_cast<std::uint32_t>(attr_mask);
         if ((mask & ugdr::control::kQpMaskState) != 0) {
             result.qp_state = static_cast<ugdr_qp_state>(snapshot.attributes.state);
+            qp->cached_state = result.qp_state;
         }
         if ((mask & ugdr::control::kQpMaskCurrentState) != 0) {
             result.cur_qp_state = static_cast<ugdr_qp_state>(snapshot.attributes.current_state);
@@ -591,7 +615,11 @@ class ClientRuntime {
 
     int query_qp_conn_info(ugdr_qp *qp, ugdr_qp_conn_info *info) {
         std::lock_guard lock(mutex_);
-        if (qps_.find(qp) == qps_.end() || !qp->live || info == nullptr) {
+        if (qps_.find(qp) == qps_.end() || info == nullptr) {
+            return EINVAL;
+        }
+        std::lock_guard posting_lock(qp->posting_mutex);
+        if (!qp->live) {
             return EINVAL;
         }
         const int connect_status = ensure_connected();
@@ -616,8 +644,12 @@ class ClientRuntime {
     int connect_qp(ugdr_qp *qp, const ugdr_qp_conn_info *remote_info, const ugdr_qp_attr *attr,
                    int attr_mask) {
         std::lock_guard lock(mutex_);
-        if (qps_.find(qp) == qps_.end() || !qp->live || remote_info == nullptr || attr == nullptr ||
+        if (qps_.find(qp) == qps_.end() || remote_info == nullptr || attr == nullptr ||
             attr_mask < 0 || remote_info->qp_num == 0) {
+            return EINVAL;
+        }
+        std::lock_guard posting_lock(qp->posting_mutex);
+        if (!qp->live) {
             return EINVAL;
         }
         const int connect_status = ensure_connected();
@@ -635,8 +667,59 @@ class ClientRuntime {
         attributes.retry_count = attr->retry_cnt;
         attributes.rnr_retry = attr->rnr_retry;
         attributes.min_rnr_timer = attr->min_rnr_timer;
-        return ugdr::control::client_connect_qp(client_, qp->daemon_identity, remote_info->qp_num,
-                                                attributes, static_cast<std::uint32_t>(attr_mask));
+        const int status =
+            ugdr::control::client_connect_qp(client_, qp->daemon_identity, remote_info->qp_num,
+                                             attributes, static_cast<std::uint32_t>(attr_mask));
+        if (status == 0) {
+            qp->cached_state = UGDR_QPS_RTS;
+        }
+        return status;
+    }
+
+    int post_send(ugdr_qp *qp, ugdr_send_wr *wr, ugdr_send_wr **bad_wr) noexcept {
+        if (qp == nullptr || wr == nullptr || bad_wr == nullptr) {
+            if (wr != nullptr && bad_wr != nullptr) {
+                *bad_wr = wr;
+            }
+            return EINVAL;
+        }
+        {
+            std::shared_lock registry_lock(qp_registry_mutex_);
+            if (qps_.find(qp) == qps_.end()) {
+                *bad_wr = wr;
+                return EINVAL;
+            }
+        }
+        std::lock_guard posting_lock(qp->posting_mutex);
+        if (!qp->live || qp->cached_state != UGDR_QPS_RTS) {
+            *bad_wr = wr;
+            return EINVAL;
+        }
+        return ugdr::api::post_send_chain(qp->send_queue, qp->init_attr.max_send_sge, wr, bad_wr);
+    }
+
+    int post_receive(ugdr_qp *qp, ugdr_recv_wr *wr, ugdr_recv_wr **bad_wr) noexcept {
+        if (qp == nullptr || wr == nullptr || bad_wr == nullptr) {
+            if (wr != nullptr && bad_wr != nullptr) {
+                *bad_wr = wr;
+            }
+            return EINVAL;
+        }
+        {
+            std::shared_lock registry_lock(qp_registry_mutex_);
+            if (qps_.find(qp) == qps_.end()) {
+                *bad_wr = wr;
+                return EINVAL;
+            }
+        }
+        std::lock_guard posting_lock(qp->posting_mutex);
+        if (!qp->live || (qp->cached_state != UGDR_QPS_INIT && qp->cached_state != UGDR_QPS_RTR &&
+                          qp->cached_state != UGDR_QPS_RTS)) {
+            *bad_wr = wr;
+            return EINVAL;
+        }
+        return ugdr::api::post_receive_chain(qp->receive_queue, qp->init_attr.max_recv_sge, wr,
+                                             bad_wr);
     }
 
   private:
@@ -652,6 +735,7 @@ class ClientRuntime {
     }
 
     std::mutex mutex_;
+    std::shared_mutex qp_registry_mutex_;
     ugdr::control::ControlClient client_;
     std::vector<std::unique_ptr<DeviceListRecord>> list_storage_;
     std::vector<std::unique_ptr<ugdr_device>> device_storage_;
@@ -674,8 +758,6 @@ ClientRuntime &runtime() {
     static ClientRuntime value;
     return value;
 }
-
-constexpr int kUnsupported = EOPNOTSUPP;
 
 }  // namespace
 
@@ -830,12 +912,12 @@ int ugdr_connect_qp(ugdr_qp *qp, const ugdr_qp_conn_info *remote_info, const ugd
     }
 }
 
-int ugdr_post_send(ugdr_qp *, ugdr_send_wr *, ugdr_send_wr **) noexcept {
-    return kUnsupported;
+int ugdr_post_send(ugdr_qp *qp, ugdr_send_wr *wr, ugdr_send_wr **bad_wr) noexcept {
+    return runtime().post_send(qp, wr, bad_wr);
 }
 
-int ugdr_post_recv(ugdr_qp *, ugdr_recv_wr *, ugdr_recv_wr **) noexcept {
-    return kUnsupported;
+int ugdr_post_recv(ugdr_qp *qp, ugdr_recv_wr *wr, ugdr_recv_wr **bad_wr) noexcept {
+    return runtime().post_receive(qp, wr, bad_wr);
 }
 
 }  // extern "C"

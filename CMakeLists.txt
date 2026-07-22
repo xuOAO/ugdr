@@ -24,6 +24,7 @@ target_include_directories(ugdr_queue
 
 add_library(ugdr_api STATIC
     src/api/api.cpp
+    src/api/wr_posting.cpp
 )
 target_include_directories(ugdr_api
     PUBLIC
