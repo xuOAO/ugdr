@@ -121,6 +121,23 @@ add_test(
     COMMAND ugdr_wr_posting_test
 )
 
+add_executable(ugdr_mock_worker_test
+    mock_worker_test.cpp
+)
+target_include_directories(ugdr_mock_worker_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_mock_worker_test
+    PRIVATE
+        ugdr_api
+        ugdr_queue
+)
+add_test(
+    NAME ugdr_mock_worker
+    COMMAND ugdr_mock_worker_test
+)
+
 add_executable(ugdr_wr_posting_benchmark
     wr_posting_benchmark.cpp
 )

@@ -2,17 +2,17 @@
   "schema_version": 1,
   "version": "v1",
   "feature": "F04",
-  "step": "F04-S03",
+  "step": "F04-S04",
   "state": "completed",
   "next_actions": {
     "F04": [
       {
-        "step": "F04-S04",
-        "action": "Mock Worker 与 completion"
+        "step": "F04-S05",
+        "action": "公开 API 集成与性能观测"
       }
     ]
   },
   "blockers": [],
-  "updated_at": "2026-07-22T09:49:12+08:00",
+  "updated_at": "2026-07-22T10:43:45+08:00",
   "updated_by": "human"
 }
