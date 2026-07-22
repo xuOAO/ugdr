@@ -3,9 +3,16 @@
   "version": "v1",
   "feature": "F05",
   "step": "F05-S01",
-  "state": "awaiting_acceptance",
-  "next_actions": {},
+  "state": "completed",
+  "next_actions": {
+    "F05": [
+      {
+        "step": "F05-S02",
+        "action": "发送路径与 in-flight/ACK"
+      }
+    ]
+  },
   "blockers": [],
-  "updated_at": "2026-07-22T16:04:51+08:00",
-  "updated_by": "agent"
+  "updated_at": "2026-07-22T16:28:05+08:00",
+  "updated_by": "human"
 }
