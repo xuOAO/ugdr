@@ -27,6 +27,7 @@
     "benchmarks/shared_ring_benchmark.cpp",
     "benchmarks/wr_posting_benchmark.cpp",
     "benchmarks/queue_metadata_benchmark.cpp",
+    "benchmarks/loop_worker_payload_benchmark.cpp",
     "tests/support",
     "tests/support/CMakeLists.txt",
     "tests/support/mock_worker_fixture.hpp",

@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -137,14 +138,15 @@ bool connect_endpoints(ugdr::control::QpService &service, const Endpoint &first,
 
 bool post_send(ugdr::control::QpService &service, const Endpoint &source, const Endpoint &target,
                std::uint64_t wr_id, ugdr_wr_opcode opcode, unsigned int flags,
-               std::uint32_t immediate = 0) {
+               std::uint32_t immediate = 0, std::uint32_t first_length = 32,
+               std::uint32_t second_length = 16) {
     ugdr::control::WorkerQpView view;
     if (service.worker_qp_view(source.qp_num, &view) != 0) {
         return false;
     }
     std::array<ugdr_sge, 2> sges{{
-        {source.memory.client_address, 32, source.registration.lkey},
-        {source.memory.client_address + 128, 16, source.registration.lkey},
+        {source.memory.client_address, first_length, source.registration.lkey},
+        {source.memory.client_address + 128, second_length, source.registration.lkey},
     }};
     ugdr_send_wr wr{};
     wr.wr_id = wr_id;
@@ -182,8 +184,146 @@ std::vector<ugdr::queue::CompletionEntry> drain(ugdr::control::QpService &servic
 
 bool drive(ugdr::worker::LoopWorker &requester, ugdr::worker::LoopWorker &responder,
            ugdr::test::ScriptedCopyBackend &backend, ugdr::worker::DatagramResult result) {
-    return requester.progress_once() && responder.progress_once() &&
-           backend.progress_once(result) && responder.progress_once() && requester.progress_once();
+    bool made_progress = false;
+    for (int iteration = 0; iteration < 64; ++iteration) {
+        bool progressed = requester.progress_once();
+        progressed = responder.progress_once() || progressed;
+        if (backend.accepted_count() != 0) {
+            progressed = backend.progress_once(result) || progressed;
+        }
+        progressed = responder.progress_once() || progressed;
+        progressed = requester.progress_once() || progressed;
+        made_progress = made_progress || progressed;
+        if (!progressed) {
+            break;
+        }
+    }
+    return made_progress && backend.accepted_count() == 0;
+}
+
+class RecordingObserver final : public ugdr::worker::ParentCompletionObserver {
+  public:
+    void on_parent_completion(const ugdr::worker::ParentCompletionEvent &event) noexcept override {
+        events.push_back(event);
+    }
+
+    std::vector<ugdr::worker::ParentCompletionEvent> events;
+};
+
+bool payload_split_and_aggregate_test() {
+    FakeCudaBackend memory_backend;
+    ugdr::control::QpService service(memory_backend);
+    Endpoint requester_endpoint;
+    Endpoint responder_endpoint;
+    if (!make_endpoint(service, 401, UINT64_C(0x50000000), &requester_endpoint) ||
+        !make_endpoint(service, 402, UINT64_C(0x60000000), &responder_endpoint) ||
+        !connect_endpoints(service, requester_endpoint, responder_endpoint)) {
+        return false;
+    }
+
+    ugdr::worker::LocalTransport transport(8, 8);
+    ugdr::test::ScriptedCopyBackend backend(8);
+    RecordingObserver observer;
+    ugdr::worker::LoopWorker requester(service, requester_endpoint.qp_num, transport, backend,
+                                       ugdr::worker::LoopWorkerRole::requester, 10, &observer);
+    ugdr::worker::LoopWorker responder(service, responder_endpoint.qp_num, transport, backend,
+                                       ugdr::worker::LoopWorkerRole::responder, 10);
+    if (!post_send(service, requester_endpoint, responder_endpoint, 41, UGDR_WR_RDMA_WRITE,
+                   UGDR_SEND_SIGNALED)) {
+        return false;
+    }
+    for (int iteration = 0; iteration < 16 && backend.accepted_count() != 6; ++iteration) {
+        (void)requester.progress_once();
+        (void)responder.progress_once();
+    }
+    if (backend.accepted_count() != 6) {
+        return false;
+    }
+
+    constexpr std::array<std::uint32_t, 6> expected_lengths{10, 10, 10, 2, 10, 6};
+    constexpr std::array<std::uint64_t, 6> expected_offsets{0, 10, 20, 30, 32, 42};
+    constexpr std::array<std::size_t, 6> completion_order{5, 0, 3, 1, 1, 0};
+    std::array<bool, 6> seen{};
+    for (const std::size_t position : completion_order) {
+        ugdr::worker::BackendRequest completed;
+        if (!backend.progress_at(position, ugdr::worker::DatagramResult::success, &completed) ||
+            completed.payload_index >= seen.size() || seen[completed.payload_index] ||
+            completed.payload_count != expected_lengths.size() ||
+            completed.parent_total_length != 48 ||
+            completed.payload_length != expected_lengths[completed.payload_index] ||
+            completed.payload_offset != expected_offsets[completed.payload_index]) {
+            return false;
+        }
+        seen[completed.payload_index] = true;
+    }
+    for (int iteration = 0; iteration < 5; ++iteration) {
+        if (!responder.progress_once() || requester.progress_once()) {
+            return false;
+        }
+    }
+    if (!responder.progress_once() || !requester.progress_once()) {
+        return false;
+    }
+    auto completions = drain(service, requester_endpoint);
+    if (completions.size() != 1 || completions[0].wr_id != 41 ||
+        completions[0].status != UGDR_WC_SUCCESS || observer.events.size() != 1 ||
+        observer.events[0].wr_id != 41 || observer.events[0].logical_bytes != 48 ||
+        observer.events[0].payload_count != 6 ||
+        observer.events[0].result != ugdr::worker::DatagramResult::success) {
+        return false;
+    }
+
+    if (!post_send(service, requester_endpoint, responder_endpoint, 42, UGDR_WR_RDMA_WRITE,
+                   UGDR_SEND_SIGNALED, 0, 5, 5) ||
+        !drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
+        return false;
+    }
+    completions = drain(service, requester_endpoint);
+    return completions.size() == 1 && completions[0].wr_id == 42 && observer.events.size() == 2 &&
+           observer.events[1].wr_id == 42 && observer.events[1].logical_bytes == 10 &&
+           observer.events[1].payload_count == 2;
+}
+
+bool deterministic_error_test() {
+    FakeCudaBackend memory_backend;
+    ugdr::control::QpService service(memory_backend);
+    Endpoint requester_endpoint;
+    Endpoint responder_endpoint;
+    if (!make_endpoint(service, 501, UINT64_C(0x70000000), &requester_endpoint) ||
+        !make_endpoint(service, 502, UINT64_C(0x71000000), &responder_endpoint) ||
+        !connect_endpoints(service, requester_endpoint, responder_endpoint)) {
+        return false;
+    }
+
+    ugdr::worker::LocalTransport transport(8, 8);
+    ugdr::test::ScriptedCopyBackend backend(8);
+    RecordingObserver observer;
+    ugdr::worker::LoopWorker requester(service, requester_endpoint.qp_num, transport, backend,
+                                       ugdr::worker::LoopWorkerRole::requester, 16, &observer);
+    ugdr::worker::LoopWorker responder(service, responder_endpoint.qp_num, transport, backend,
+                                       ugdr::worker::LoopWorkerRole::responder, 16);
+    if (!post_send(service, requester_endpoint, responder_endpoint, 51, UGDR_WR_RDMA_WRITE, 0)) {
+        return false;
+    }
+    for (int iteration = 0; iteration < 16 && backend.accepted_count() != 3; ++iteration) {
+        (void)requester.progress_once();
+        (void)responder.progress_once();
+    }
+    if (backend.accepted_count() != 3 ||
+        !backend.progress_at(2, ugdr::worker::DatagramResult::backend_error) ||
+        !backend.progress_at(0, ugdr::worker::DatagramResult::remote_access_error) ||
+        !backend.progress_at(0, ugdr::worker::DatagramResult::remote_operation_error)) {
+        return false;
+    }
+    for (int iteration = 0; iteration < 16 && observer.events.empty(); ++iteration) {
+        (void)responder.progress_once();
+        (void)requester.progress_once();
+    }
+    const auto completions = drain(service, requester_endpoint);
+    return observer.events.size() == 1 &&
+           observer.events[0].result == ugdr::worker::DatagramResult::remote_access_error &&
+           completions.size() == 1 && completions[0].wr_id == 51 &&
+           completions[0].status == UGDR_WC_REM_ACCESS_ERR;
 }
 
 bool sq_sig_all_test() {
@@ -240,8 +380,9 @@ int main() {
     const auto *submitted = backend.front_request();
     std::uint64_t expected_source = 0;
     std::uint64_t expected_target = 0;
-    if (submitted == nullptr || submitted->source_segments.size() != 2 ||
-        submitted->total_length != 48 ||
+    if (submitted == nullptr || submitted->parent_total_length != 48 ||
+        submitted->payload_count != 2 || submitted->payload_index != 0 ||
+        submitted->payload_offset != 0 || submitted->payload_length != 32 ||
         service.resolve_lkey(requester_endpoint.session, requester_endpoint.pd_identity,
                              requester_endpoint.registration.lkey,
                              requester_endpoint.memory.client_address, 32, &expected_source) != 0 ||
@@ -249,10 +390,9 @@ int main() {
                              responder_endpoint.registration.rkey,
                              responder_endpoint.memory.client_address + 512, 48,
                              &expected_target) != 0 ||
-        submitted->source_segments[0].daemon_address != expected_source ||
+        submitted->source_daemon_address != expected_source ||
         submitted->target_daemon_address != expected_target || !backend.progress_once() ||
-        !drain(service, requester_endpoint).empty() || !responder.progress_once() ||
-        !requester.progress_once()) {
+        !drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
         return 3;
     }
     auto completions = drain(service, requester_endpoint);
@@ -292,8 +432,7 @@ int main() {
                    UGDR_SEND_SIGNALED, 9) ||
         !requester.progress_once() || !responder.progress_once() || backend.accepted_count() != 0 ||
         responder.progress_once() || !post_receive(service, responder_endpoint, 22) ||
-        !responder.progress_once() || backend.accepted_count() != 1 || !backend.progress_once() ||
-        !responder.progress_once() || !requester.progress_once()) {
+        !drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
         return 9;
     }
     completions = drain(service, requester_endpoint);
@@ -316,7 +455,8 @@ int main() {
     if (!post_send(service, requester_endpoint, responder_endpoint, 17, UGDR_WR_RDMA_WRITE,
                    UGDR_SEND_SIGNALED) ||
         !requester.progress_once() || !responder.progress_once() || !backend.progress_once() ||
-        !responder.progress_once()) {
+        !responder.progress_once() || !requester.progress_once() || !responder.progress_once() ||
+        !backend.progress_once() || !responder.progress_once()) {
         return 13;
     }
     ugdr::control::WorkerQpView requester_view;
@@ -347,8 +487,7 @@ int main() {
         return 17;
     }
     backend.set_capacity(2);
-    if (!responder.progress_once() || backend.accepted_count() != 1 || !backend.progress_once() ||
-        !responder.progress_once() || !requester.progress_once()) {
+    if (!drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
         return 18;
     }
     completions = drain(service, requester_endpoint);
@@ -358,7 +497,9 @@ int main() {
 
     if (!post_send(service, requester_endpoint, responder_endpoint, 23, UGDR_WR_RDMA_WRITE,
                    UGDR_SEND_SIGNALED) ||
-        !requester.progress_once() || !responder.progress_once() || !backend.progress_once()) {
+        !requester.progress_once() || !responder.progress_once() || !backend.progress_once() ||
+        !responder.progress_once() || !requester.progress_once() || !responder.progress_once() ||
+        !backend.progress_once()) {
         return 20;
     }
     const ugdr::worker::ResponseDatagram blocking_response{
@@ -382,28 +523,18 @@ int main() {
                    UGDR_SEND_SIGNALED) ||
         !post_send(service, requester_endpoint, responder_endpoint, 20, UGDR_WR_RDMA_WRITE,
                    UGDR_SEND_SIGNALED) ||
-        !requester.progress_once() ||
-        !ugdr::test::front_send_wr_id(*requester_view.send_queue, 20) ||
-        !responder.progress_once() || !backend.progress_once() || !responder.progress_once() ||
-        !requester.progress_once()) {
+        !drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
         return 24;
     }
     completions = drain(service, requester_endpoint);
-    if (completions.size() != 1 || completions[0].wr_id != 19 ||
-        ugdr::test::front_send_wr_id(*requester_view.send_queue, 20) ||
-        !responder.progress_once() || !backend.progress_once() || !responder.progress_once() ||
-        !requester.progress_once()) {
+    if (completions.size() != 2 || completions[0].wr_id != 19 || completions[1].wr_id != 20) {
         return 25;
-    }
-    completions = drain(service, requester_endpoint);
-    if (completions.size() != 1 || completions[0].wr_id != 20) {
-        return 26;
     }
 
     ugdr::worker::RequestDatagram occupying;
-    occupying.request_id = 99;
+    occupying.parent_request_id = 99;
     ugdr::worker::RequestDatagram occupying_second;
-    occupying_second.request_id = 100;
+    occupying_second.parent_request_id = 100;
     if (!transport.try_push_request(occupying) || !transport.try_push_request(occupying_second) ||
         !post_send(service, requester_endpoint, responder_endpoint, 16, UGDR_WR_RDMA_WRITE,
                    UGDR_SEND_SIGNALED) ||
@@ -411,13 +542,18 @@ int main() {
         return 27;
     }
     ugdr::worker::RequestDatagram removed;
-    if (service.worker_qp_view(requester_endpoint.qp_num, &requester_view) != 0 ||
-        !ugdr::test::front_send_wr_id(*requester_view.send_queue, 16) ||
-        !transport.try_pop_request(removed) || !transport.try_pop_request(removed) ||
-        !requester.progress_once() || !responder.progress_once() || !backend.progress_once() ||
-        !responder.progress_once() || !requester.progress_once()) {
+    if (service.worker_qp_view(requester_endpoint.qp_num, &requester_view) != 0) {
         return 28;
     }
+    if (!transport.try_pop_request(removed) || !transport.try_pop_request(removed)) {
+        return 31;
+    }
+    if (!drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
+        return 32;
+    }
     completions = drain(service, requester_endpoint);
-    return completions.size() == 1 && completions[0].wr_id == 16 && sq_sig_all_test() ? 0 : 29;
+    return completions.size() == 1 && completions[0].wr_id == 16 && sq_sig_all_test() &&
+                   payload_split_and_aggregate_test() && deterministic_error_test()
+               ? 0
+               : 29;
 }

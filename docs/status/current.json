@@ -1,11 +1,18 @@
 {
   "schema_version": 1,
   "version": "v1",
-  "feature": "F05",
-  "step": "F05-S02",
+  "feature": "F06",
+  "step": "F06-S01",
   "state": "completed",
-  "next_actions": {},
+  "next_actions": {
+    "F06": [
+      {
+        "step": "F06-S02",
+        "action": "Persistent Kernel 模型实验与选型"
+      }
+    ]
+  },
   "blockers": [],
-  "updated_at": "2026-07-23T01:04:20+08:00",
+  "updated_at": "2026-07-23T23:09:53+08:00",
   "updated_by": "human"
 }

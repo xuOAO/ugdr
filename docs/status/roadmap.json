@@ -15,6 +15,11 @@
       "path": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
       "revision": 57,
       "body_sha256": "ff7daa3838a1d4c63bdef6ff7e6cb651ca3a0c10dc43e78cc77518044b1e7b0f"
+    },
+    {
+      "path": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
+      "revision": 29,
+      "body_sha256": "489a448bba09feb06bae4916dc33c0fd862bad0e8f3936b3c46897b2e616f2b5"
     }
   ],
   "routes": [
@@ -191,6 +196,48 @@
       "feature": "F05",
       "step": "F05-S02",
       "source": "docs/v1_docs/F05_Loop_Worker_与本地_Datagram_数据路径/F05_Loop_Worker_与本地_Datagram_数据路径_功能文档.md",
+      "next_actions": {
+        "F06": [
+          {
+            "step": "F06-S01",
+            "action": "Payload 拆分、完成聚合与 F05 全链路性能 Harness"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F06",
+      "step": "F06-S01",
+      "source": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
+      "next_actions": {
+        "F06": [
+          {
+            "step": "F06-S02",
+            "action": "Persistent Kernel 模型实验与选型"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F06",
+      "step": "F06-S02",
+      "source": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
+      "next_actions": {
+        "F06": [
+          {
+            "step": "F06-S03",
+            "action": "真实 CUDA Backend 集成与端到端验收"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F06",
+      "step": "F06-S03",
+      "source": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
       "next_actions": {}
     }
   ]

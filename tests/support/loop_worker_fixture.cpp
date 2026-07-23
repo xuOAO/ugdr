@@ -1,5 +1,7 @@
 #include "support/loop_worker_fixture.hpp"
 
+#include <cstddef>
+#include <iterator>
 #include <utility>
 
 namespace ugdr::test {
@@ -24,12 +26,31 @@ bool ScriptedCopyBackend::try_pop_completion(worker::BackendCompletion &completi
     return true;
 }
 
-bool ScriptedCopyBackend::progress_once(worker::DatagramResult result) {
-    if (accepted_.empty() || completions_.size() >= capacity_) {
+bool ScriptedCopyBackend::progress_once(worker::DatagramResult result,
+                                        worker::BackendRequest *completed_request) {
+    return progress_at(0, result, completed_request);
+}
+
+bool ScriptedCopyBackend::progress_at(std::size_t index, worker::DatagramResult result,
+                                      worker::BackendRequest *completed_request) {
+    if (index >= accepted_.size() || completions_.size() >= capacity_) {
         return false;
     }
-    completions_.push_back({accepted_.front().request_id, result});
-    accepted_.pop_front();
+    auto request = accepted_.begin();
+    std::advance(request, static_cast<std::ptrdiff_t>(index));
+    if (completed_request != nullptr) {
+        *completed_request = *request;
+    }
+    completions_.push_back({request->parent_request_id, request->payload_index, result});
+    accepted_.erase(request);
+    return true;
+}
+
+bool ScriptedCopyBackend::inject_completion(const worker::BackendCompletion &completion) {
+    if (completions_.size() >= capacity_) {
+        return false;
+    }
+    completions_.push_back(completion);
     return true;
 }
 
