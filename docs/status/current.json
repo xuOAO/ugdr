@@ -3,9 +3,9 @@
   "version": "v1",
   "feature": "F06",
   "step": "F06-S01",
-  "state": "ready_for_implementation",
+  "state": "awaiting_acceptance",
   "next_actions": {},
   "blockers": [],
-  "updated_at": "2026-07-23T12:15:19+08:00",
-  "updated_by": "human"
+  "updated_at": "2026-07-23T14:02:08+08:00",
+  "updated_by": "agent"
 }

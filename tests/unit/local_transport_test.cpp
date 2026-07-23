@@ -20,7 +20,11 @@ RequestDatagram request(std::uint64_t id, DatagramOpcode opcode = DatagramOpcode
             static_cast<std::uint32_t>(id + 30),
             static_cast<std::uint32_t>(id + 40),
             12,
-            {{UINT64_C(0x200000000) + id, 5}, {UINT64_C(0x300000000) + id, 7}}};
+            5,
+            UINT64_C(0x200000000) + id,
+            7,
+            1,
+            2};
 }
 
 ResponseDatagram response(std::uint64_t id, DatagramResult result) {

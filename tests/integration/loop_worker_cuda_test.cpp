@@ -335,8 +335,9 @@ int main() {
         if (result != 0) {
             break;
         }
-        const char progress = 'p';
-        if (::write(progress_pipe[1], &progress, 1) != 1) {
+        constexpr std::array<char, 2> progress{'p', 'p'};
+        if (::write(progress_pipe[1], progress.data(), progress.size()) !=
+            static_cast<ssize_t>(progress.size())) {
             result = 10;
             break;
         }
