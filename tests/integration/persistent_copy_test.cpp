@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -276,6 +277,113 @@ int copy_core_matrix_smoke() {
     return 0;
 }
 
+int direct_atomic_queue_smoke() {
+    constexpr std::size_t payload_bytes = 8192;
+    constexpr std::size_t guard_bytes = 16;
+    constexpr std::size_t capacity = 8;
+    constexpr std::uint64_t seed = UINT64_C(0xda7a70c0da7a70c0);
+    constexpr std::size_t total_tasks = 257;
+
+    ugdr::gpu::PersistentCopyPayloadBuffer payload;
+    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(payload_bytes, guard_bytes, &payload) !=
+            0 ||
+        payload.prepare(seed) != 0) {
+        return 30;
+    }
+    ugdr::gpu::DirectAtomicQueue queue;
+    if (ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, payload.stage_buffer_base(), &queue) !=
+            0 ||
+        queue.capacity() != capacity || queue.copy_warps() != 4 ||
+        queue.host_meta_bytes() < capacity * 2 * 64 || queue.start() != 0 ||
+        !queue.running() || !queue.accepting()) {
+        return 31;
+    }
+    ugdr::gpu::CopyCompletion completion;
+    if (queue.try_poll(&completion) != EAGAIN) {
+        return 32;
+    }
+
+    std::vector<bool> seen(total_tasks, false);
+    std::size_t submitted = 0;
+    std::size_t completed = 0;
+    std::size_t stalled = 0;
+    while (completed != total_tasks) {
+        bool progressed = false;
+        while (submitted != total_tasks) {
+            ugdr::gpu::CopyTask task;
+            if (payload.make_task(submitted + 1, payload.target_address(), payload_bytes, 0,
+                                  &task) != 0) {
+                return 33;
+            }
+            const int status = queue.try_submit(task);
+            if (status == EAGAIN) {
+                break;
+            }
+            if (status != 0) {
+                return 34;
+            }
+            ++submitted;
+            progressed = true;
+        }
+        while (queue.try_poll(&completion) == 0) {
+            if (completion.task_id == 0 || completion.task_id > total_tasks ||
+                completion.result != ugdr::gpu::CopyTaskResult::success ||
+                seen[completion.task_id - 1]) {
+                return 35;
+            }
+            seen[completion.task_id - 1] = true;
+            ++completed;
+            progressed = true;
+        }
+        stalled = progressed ? 0 : stalled + 1;
+        if (stalled > 10000000) {
+            return 36;
+        }
+    }
+    ugdr::gpu::CopyTask overflow_task;
+    if (payload.make_task(total_tasks + 1, payload.target_address(), payload_bytes, 0,
+                          &overflow_task) != 0 ||
+        !queue.drained() || queue.accepted_tasks() != total_tasks ||
+        queue.completed_tasks() != total_tasks ||
+        queue.host_system_atomic_operations() != total_tasks * 2 ||
+        queue.request_stop() != 0 || queue.try_submit(overflow_task) != EINVAL ||
+        queue.wait() != 0 || queue.running() || queue.wait() != EINVAL) {
+        return 37;
+    }
+
+    if (queue.start() != 0) {
+        return 38;
+    }
+    for (std::size_t index = 0; index < capacity; ++index) {
+        ugdr::gpu::CopyTask task;
+        if (payload.make_task(1000 + index, payload.target_address(), payload_bytes, 0, &task) !=
+                0 ||
+            queue.try_submit(task) != 0) {
+            return 39;
+        }
+    }
+    if (queue.try_submit(overflow_task) != EAGAIN || queue.request_stop() != 0 ||
+        queue.wait() != 0 || queue.drained()) {
+        return 40;
+    }
+    std::vector<bool> drained_seen(capacity, false);
+    for (std::size_t index = 0; index < capacity; ++index) {
+        if (queue.try_poll(&completion) != 0 || completion.task_id < 1000 ||
+            completion.task_id >= 1000 + capacity ||
+            drained_seen[completion.task_id - 1000]) {
+            return 41;
+        }
+        drained_seen[completion.task_id - 1000] = true;
+    }
+    ugdr::gpu::PayloadCheck check;
+    if (!queue.drained() || queue.try_poll(&completion) != EAGAIN ||
+        payload.verify(seed, &check) != 0 || !check.payload_matches || !check.guards_intact ||
+        queue.reset() != 0 || !queue.empty()) {
+        return 42;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -286,5 +394,9 @@ int main() {
     if (resource_status != 0) {
         return resource_status;
     }
-    return copy_core_matrix_smoke();
+    const int copy_core_status = copy_core_matrix_smoke();
+    if (copy_core_status != 0) {
+        return copy_core_status;
+    }
+    return direct_atomic_queue_smoke();
 }
