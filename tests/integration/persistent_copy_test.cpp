@@ -54,6 +54,22 @@ bool common_contract_smoke() {
     config.payload_bytes = 8192;
     config.outstanding_capacity = 2;
     config.host_batch = 2;
+    config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
+    config.copy_warps = 32;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
+        return false;
+    }
+    config.copy_warps = 33;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
+    config.model = ugdr::gpu::PersistentCopyModel::warp_specialized;
+    config.copy_warps = 32;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
+    config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
+    config.copy_warps = 4;
 
     ugdr::gpu::PersistentCopyLifecycle lifecycle;
     if (lifecycle.start(config) != 0 ||

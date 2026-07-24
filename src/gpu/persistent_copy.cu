@@ -473,10 +473,11 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
     if (config.payload_bytes == 0 || config.payload_bytes > kPersistentCopyMaxPayloadBytes ||
         config.parent_wr_bytes == 0 || config.outstanding_capacity == 0 || config.host_batch == 0 ||
         config.host_batch > config.outstanding_capacity || config.copy_warps == 0 ||
-        config.copy_warps > 30 || config.warmup_tasks == 0 || config.iterations == 0) {
+        config.copy_warps > 32 || config.warmup_tasks == 0 || config.iterations == 0) {
         return EINVAL;
     }
-    if (config.model == PersistentCopyModel::warp_specialized && config.shared_stage_count == 0) {
+    if (config.model == PersistentCopyModel::warp_specialized &&
+        (config.copy_warps > 30 || config.shared_stage_count == 0)) {
         return EINVAL;
     }
     return 0;
@@ -807,7 +808,7 @@ int DirectAtomicQueue::allocate(std::size_t capacity, std::uint32_t copy_warps,
                                 std::uint64_t stage_buffer_base,
                                 DirectAtomicQueue *queue) noexcept {
     std::size_t bytes = 0;
-    if (queue == nullptr || !queue->empty() || copy_warps == 0 || copy_warps > 30 ||
+    if (queue == nullptr || !queue->empty() || copy_warps == 0 || copy_warps > 32 ||
         stage_buffer_base == 0 || !direct_atomic_allocation_size(capacity, &bytes)) {
         return EINVAL;
     }

@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 
 namespace {
@@ -218,14 +219,27 @@ int dispatch(PersistentCopyConfig config) {
 }  // namespace
 
 int main(int argc, char **argv) {
-    if (argc > 2) {
-        std::fprintf(stderr, "usage: %s [model]\n", argv[0]);
+    if (argc > 3) {
+        std::fprintf(stderr, "usage: %s [model] [copy_warps]\n", argv[0]);
         return 1;
     }
     PersistentCopyConfig config;
     if (argc == 2 && ugdr::gpu::parse_persistent_copy_model(argv[1], &config.model) != 0) {
         std::fprintf(stderr, "unknown persistent copy model: %s\n", argv[1]);
         return 1;
+    }
+    if (argc == 3) {
+        if (ugdr::gpu::parse_persistent_copy_model(argv[1], &config.model) != 0) {
+            std::fprintf(stderr, "unknown persistent copy model: %s\n", argv[1]);
+            return 1;
+        }
+        char *end = nullptr;
+        const unsigned long copy_warps = std::strtoul(argv[2], &end, 10);
+        if (end == argv[2] || *end != '\0' || copy_warps > UINT32_MAX) {
+            std::fprintf(stderr, "invalid copy_warps: %s\n", argv[2]);
+            return 1;
+        }
+        config.copy_warps = static_cast<std::uint32_t>(copy_warps);
     }
     return dispatch(config);
 }
