@@ -242,7 +242,7 @@ PersistentCopyPayloadBuffer::~PersistentCopyPayloadBuffer() {
 
 PersistentCopyPayloadBuffer::PersistentCopyPayloadBuffer(
     PersistentCopyPayloadBuffer &&other) noexcept
-    : source_allocation_(std::exchange(other.source_allocation_, nullptr)),
+    : stage_buffer_allocation_(std::exchange(other.stage_buffer_allocation_, nullptr)),
       target_allocation_(std::exchange(other.target_allocation_, nullptr)),
       payload_capacity_(std::exchange(other.payload_capacity_, 0)),
       guard_bytes_(std::exchange(other.guard_bytes_, 0)) {
@@ -252,7 +252,7 @@ PersistentCopyPayloadBuffer &
 PersistentCopyPayloadBuffer::operator=(PersistentCopyPayloadBuffer &&other) noexcept {
     if (this != &other) {
         (void)reset();
-        source_allocation_ = std::exchange(other.source_allocation_, nullptr);
+        stage_buffer_allocation_ = std::exchange(other.stage_buffer_allocation_, nullptr);
         target_allocation_ = std::exchange(other.target_allocation_, nullptr);
         payload_capacity_ = std::exchange(other.payload_capacity_, 0);
         guard_bytes_ = std::exchange(other.guard_bytes_, 0);
@@ -264,21 +264,22 @@ int PersistentCopyPayloadBuffer::allocate(std::size_t payload_capacity, std::siz
                                           PersistentCopyPayloadBuffer *buffer) noexcept {
     std::size_t allocation_size = 0;
     if (buffer == nullptr || !buffer->empty() ||
+        payload_capacity > kPersistentCopyMaxStageBufferBytes ||
         !checked_allocation_size(payload_capacity, guard_bytes, &allocation_size)) {
         return EINVAL;
     }
-    void *source = nullptr;
-    cudaError_t status = cudaMalloc(&source, allocation_size);
+    void *stage_buffer = nullptr;
+    cudaError_t status = cudaMalloc(&stage_buffer, allocation_size);
     if (status != cudaSuccess) {
         return cuda_status(status);
     }
     void *target = nullptr;
     status = cudaMalloc(&target, allocation_size);
     if (status != cudaSuccess) {
-        (void)cudaFree(source);
+        (void)cudaFree(stage_buffer);
         return cuda_status(status);
     }
-    buffer->source_allocation_ = source;
+    buffer->stage_buffer_allocation_ = stage_buffer;
     buffer->target_allocation_ = target;
     buffer->payload_capacity_ = payload_capacity;
     buffer->guard_bytes_ = guard_bytes;
@@ -291,15 +292,15 @@ int PersistentCopyPayloadBuffer::prepare(std::uint64_t seed) noexcept {
         return EINVAL;
     }
     try {
-        std::vector<std::uint8_t> source(allocation_size, kPayloadGuardByte);
+        std::vector<std::uint8_t> stage_buffer(allocation_size, kPayloadGuardByte);
         std::vector<std::uint8_t> target(allocation_size, kPayloadGuardByte);
         for (std::size_t index = 0; index < payload_capacity_; ++index) {
-            source[guard_bytes_ + index] = persistent_copy_payload_byte(seed, index);
+            stage_buffer[guard_bytes_ + index] = persistent_copy_payload_byte(seed, index);
             target[guard_bytes_ + index] = kPayloadInitialTargetByte;
         }
         CUresult status =
-            cuMemcpyHtoD(static_cast<CUdeviceptr>(pointer_address(source_allocation_)),
-                         source.data(), source.size());
+            cuMemcpyHtoD(static_cast<CUdeviceptr>(pointer_address(stage_buffer_allocation_)),
+                         stage_buffer.data(), stage_buffer.size());
         if (status != CUDA_SUCCESS) {
             return driver_status(status);
         }
@@ -354,32 +355,32 @@ int PersistentCopyPayloadBuffer::verify(std::uint64_t seed, PayloadCheck *check)
     }
 }
 
-int PersistentCopyPayloadBuffer::make_task(std::uint64_t task_id, std::uint64_t parent_request_id,
-                                           std::uint32_t payload_index, std::size_t length,
+int PersistentCopyPayloadBuffer::make_task(std::uint64_t task_id, std::uint64_t target_address,
+                                           std::size_t length, std::uint32_t relative_offset,
                                            CopyTask *task) const noexcept {
-    if (task == nullptr || empty() || length == 0 || length > payload_capacity_ ||
+    const std::size_t offset = relative_offset;
+    if (task == nullptr || empty() || target_address == 0 || length == 0 ||
+        offset > payload_capacity_ || length > payload_capacity_ - offset ||
         length > std::numeric_limits<std::uint32_t>::max()) {
         return EINVAL;
     }
     CopyTask result;
     result.task_id = task_id;
-    result.parent_request_id = parent_request_id;
-    result.payload_index = payload_index;
-    result.source_address = source_address();
-    result.target_address = target_address();
+    result.target_address = target_address;
     result.length = static_cast<std::uint32_t>(length);
+    result.relative_offset = relative_offset;
     *task = result;
     return 0;
 }
 
 int PersistentCopyPayloadBuffer::reset() noexcept {
-    void *const source = std::exchange(source_allocation_, nullptr);
+    void *const stage_buffer = std::exchange(stage_buffer_allocation_, nullptr);
     void *const target = std::exchange(target_allocation_, nullptr);
     payload_capacity_ = 0;
     guard_bytes_ = 0;
     int status = 0;
-    if (source != nullptr) {
-        status = cuda_status(cudaFree(source));
+    if (stage_buffer != nullptr) {
+        status = cuda_status(cudaFree(stage_buffer));
     }
     if (target != nullptr) {
         const int target_status = cuda_status(cudaFree(target));
@@ -390,11 +391,12 @@ int PersistentCopyPayloadBuffer::reset() noexcept {
     return status;
 }
 
-std::uint64_t PersistentCopyPayloadBuffer::source_address() const noexcept {
-    if (source_allocation_ == nullptr) {
+std::uint64_t PersistentCopyPayloadBuffer::stage_buffer_base() const noexcept {
+    if (stage_buffer_allocation_ == nullptr) {
         return 0;
     }
-    return pointer_address(static_cast<const std::uint8_t *>(source_allocation_) + guard_bytes_);
+    return pointer_address(static_cast<const std::uint8_t *>(stage_buffer_allocation_) +
+                           guard_bytes_);
 }
 
 std::uint64_t PersistentCopyPayloadBuffer::target_address() const noexcept {
@@ -413,7 +415,7 @@ std::size_t PersistentCopyPayloadBuffer::guard_bytes() const noexcept {
 }
 
 bool PersistentCopyPayloadBuffer::empty() const noexcept {
-    return source_allocation_ == nullptr && target_allocation_ == nullptr;
+    return stage_buffer_allocation_ == nullptr && target_allocation_ == nullptr;
 }
 
 int PersistentCopyLifecycle::start(const PersistentCopyConfig &config) noexcept {

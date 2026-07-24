@@ -8,6 +8,7 @@ namespace ugdr::gpu {
 
 constexpr std::uint32_t kPersistentCopyResultSchemaVersion = 1;
 constexpr std::size_t kPersistentCopyMaxPayloadBytes = 8192;
+constexpr std::uint64_t kPersistentCopyMaxStageBufferBytes = UINT64_C(1) << 32;
 
 enum class PersistentCopyModel : std::uint32_t {
     direct_atomic = 0,
@@ -27,17 +28,13 @@ enum class CopyTaskResult : std::uint32_t {
 
 struct alignas(16) CopyTask {
     std::uint64_t task_id = 0;
-    std::uint64_t parent_request_id = 0;
-    std::uint64_t source_address = 0;
     std::uint64_t target_address = 0;
-    std::uint32_t payload_index = 0;
     std::uint32_t length = 0;
+    std::uint32_t relative_offset = 0;
 };
 
 struct alignas(16) CopyCompletion {
     std::uint64_t task_id = 0;
-    std::uint64_t parent_request_id = 0;
-    std::uint32_t payload_index = 0;
     CopyTaskResult result = CopyTaskResult::success;
 };
 
@@ -45,6 +42,14 @@ static_assert(std::is_standard_layout_v<CopyTask>);
 static_assert(std::is_trivially_copyable_v<CopyTask>);
 static_assert(std::is_standard_layout_v<CopyCompletion>);
 static_assert(std::is_trivially_copyable_v<CopyCompletion>);
+static_assert(sizeof(CopyTask) == 32);
+static_assert(sizeof(CopyCompletion) == 16);
+static_assert(offsetof(CopyTask, task_id) == 0);
+static_assert(offsetof(CopyTask, target_address) == 8);
+static_assert(offsetof(CopyTask, length) == 16);
+static_assert(offsetof(CopyTask, relative_offset) == 20);
+static_assert(offsetof(CopyCompletion, task_id) == 0);
+static_assert(offsetof(CopyCompletion, result) == 8);
 
 struct PersistentCopyConfig {
     PersistentCopyModel model = PersistentCopyModel::direct_atomic;
@@ -140,18 +145,18 @@ class PersistentCopyPayloadBuffer {
                         PersistentCopyPayloadBuffer *buffer) noexcept;
     int prepare(std::uint64_t seed) noexcept;
     int verify(std::uint64_t seed, PayloadCheck *check) const noexcept;
-    int make_task(std::uint64_t task_id, std::uint64_t parent_request_id,
-                  std::uint32_t payload_index, std::size_t length, CopyTask *task) const noexcept;
+    int make_task(std::uint64_t task_id, std::uint64_t target_address, std::size_t length,
+                  std::uint32_t relative_offset, CopyTask *task) const noexcept;
     int reset() noexcept;
 
-    [[nodiscard]] std::uint64_t source_address() const noexcept;
+    [[nodiscard]] std::uint64_t stage_buffer_base() const noexcept;
     [[nodiscard]] std::uint64_t target_address() const noexcept;
     [[nodiscard]] std::size_t payload_capacity() const noexcept;
     [[nodiscard]] std::size_t guard_bytes() const noexcept;
     [[nodiscard]] bool empty() const noexcept;
 
   private:
-    void *source_allocation_ = nullptr;
+    void *stage_buffer_allocation_ = nullptr;
     void *target_allocation_ = nullptr;
     std::size_t payload_capacity_ = 0;
     std::size_t guard_bytes_ = 0;

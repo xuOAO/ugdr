@@ -70,7 +70,21 @@ bool common_contract_smoke() {
         return false;
     }
 
-    return sizeof(ugdr::gpu::CopyTask) % 16 == 0 && sizeof(ugdr::gpu::CopyCompletion) % 16 == 0 &&
+    ugdr::gpu::CopyCompletion completion;
+    completion.task_id = 17;
+    completion.result = ugdr::gpu::CopyTaskResult::copy_failed;
+    ugdr::gpu::PersistentCopyPayloadBuffer oversized_stage_buffer;
+    if constexpr (std::numeric_limits<std::size_t>::max() >
+                  ugdr::gpu::kPersistentCopyMaxStageBufferBytes) {
+        if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(
+                static_cast<std::size_t>(ugdr::gpu::kPersistentCopyMaxStageBufferBytes + 1), 16,
+                &oversized_stage_buffer) != EINVAL) {
+            return false;
+        }
+    }
+    return sizeof(ugdr::gpu::CopyTask) == 32 && sizeof(ugdr::gpu::CopyCompletion) == 16 &&
+           completion.task_id == 17 &&
+           completion.result == ugdr::gpu::CopyTaskResult::copy_failed &&
            ugdr::gpu::persistent_copy_payload_byte(7, 3) ==
                ugdr::gpu::persistent_copy_payload_byte(7, 3) &&
            ugdr::gpu::persistent_copy_payload_byte(7, 3) !=
@@ -124,20 +138,35 @@ int gpu_resource_smoke() {
     if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(payload_bytes, guard_bytes, &payload) !=
             0 ||
         payload.prepare(seed) != 0 || payload.payload_capacity() != payload_bytes ||
-        payload.guard_bytes() != guard_bytes || payload.source_address() == 0 ||
+        payload.guard_bytes() != guard_bytes || payload.stage_buffer_base() == 0 ||
         payload.target_address() == 0) {
         return 14;
     }
     ugdr::gpu::CopyTask task;
-    if (payload.make_task(17, 23, 2, payload_bytes, &task) != 0 || task.task_id != 17 ||
-        task.parent_request_id != 23 || task.payload_index != 2 ||
-        task.source_address != payload.source_address() ||
+    if (payload.make_task(17, payload.target_address(), payload_bytes, 0, &task) != 0 ||
+        task.task_id != 17 ||
         task.target_address != payload.target_address() || task.length != payload_bytes ||
-        payload.make_task(1, 1, 0, payload_bytes + 1, &task) != EINVAL) {
+        task.relative_offset != 0 ||
+        payload.make_task(1, payload.target_address(), payload_bytes + 1, 0, &task) != EINVAL ||
+        payload.make_task(1, payload.target_address(), 2,
+                          static_cast<std::uint32_t>(payload_bytes - 1), &task) != EINVAL ||
+        payload.make_task(1, 0, payload_bytes, 0, &task) != EINVAL) {
         return 15;
     }
+    ugdr::gpu::CopyTask offset_task;
+    constexpr std::uint32_t relative_offset = 16;
+    if (payload.make_task(18, payload.target_address() + relative_offset,
+                          payload_bytes - relative_offset, relative_offset, &offset_task) != 0 ||
+        offset_task.task_id != 18 ||
+        offset_task.target_address != payload.target_address() + relative_offset ||
+        offset_task.length != payload_bytes - relative_offset ||
+        offset_task.relative_offset != relative_offset) {
+        return 15;
+    }
+    const std::uint64_t source_address =
+        payload.stage_buffer_base() + task.relative_offset;
     if (cuMemcpyDtoD(static_cast<CUdeviceptr>(task.target_address),
-                     static_cast<CUdeviceptr>(task.source_address), task.length) != CUDA_SUCCESS ||
+                     static_cast<CUdeviceptr>(source_address), task.length) != CUDA_SUCCESS ||
         cuCtxSynchronize() != CUDA_SUCCESS) {
         return 16;
     }
