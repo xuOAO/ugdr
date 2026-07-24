@@ -4,13 +4,13 @@ source_token: "D49xd7Ob7oT67GxVtySc1tYanO9"
 source_url: "https://my.feishu.cn/docx/D49xd7Ob7oT67GxVtySc1tYanO9"
 source_path: "我的空间 / UGDR / UGDR_v1 设计 / F06_Persistent GPU Kernel 与真实 GPU Copy / F06-S02_Persistent Kernel 模型实验与选型 步骤文档"
 source_title: "F06-S02_Persistent Kernel 模型实验与选型 步骤文档"
-source_revision: 14
+source_revision: 18
 doc_type: "step"
 content_mode: "agent"
 review_status: "reviewed"
-synced_at: "2026-07-24T10:12:10+08:00"
+synced_at: "2026-07-24T14:36:54+08:00"
 generated_by: "ugdr-sync-docs-to-md"
-generated_body_sha256: "3667005aa882c98cfb28ed951e1bdca962068293a83fd6848bca6820e8156db0"
+generated_body_sha256: "9d73ce34e4c8b3964253f2c9389ebd7035010ae30c950d4ee11cd159cbdedebf"
 ---
 # F06-S02_Persistent Kernel 模型实验与选型 步骤文档
 
@@ -58,8 +58,8 @@ T01 只建立候选之间可比较的逻辑语义和 benchmark shell，不建立
 
 | 对象 | 最小字段 | 约束 |
 |-|-|-|
-| `CopyTask` | task ID、parent request ID、payload index、source address、target address、length。 | 不包含 ring ID、lane ID、warp ID 或模型专属 sequence。 |
-| `CopyCompletion` | task ID、parent request ID、payload index、result。 | 只表达一个 payload task 的终态；parent WR 聚合沿用 S01，不放进 kernel。 |
+| `CopyTask` | task ID、target address、length、relative offset。 | `relative_offset` 是相对固定 `stage_buffer_base` 的 32-bit 字节偏移；source address 由 `stage_buffer_base + relative_offset` 推导。stage buffer 不超过 4 GiB，发布前以无溢出方式检查 offset 和 length 均在 stage buffer 范围内。task 不携带 parent request ID、payload index、ring ID、lane ID、warp ID 或模型专属 sequence。 |
+| `CopyCompletion` | task ID、result。 | Host 以 task ID 查询 sidecar，恢复 parent request ID 与 payload index 后沿用 S01 完成聚合；parent WR 语义不进入 GPU task/completion 或 kernel。 |
 | 总 outstanding capacity | 每个实验 case 固定同一总 slot 数。 | dynamic 模型按 lane 分摊总容量，不能给每个 lane 一份完整容量后宣称公平。 |
 | 测量输入 | 同一 source/destination 数据、payload 序列、warmup、iterations 和 batch。 | 每行结果打印真实模型参数、ring 数、Host meta bytes、原子次数和 shared-memory 用量。 |
 
