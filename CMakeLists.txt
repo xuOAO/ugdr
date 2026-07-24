@@ -86,6 +86,7 @@ target_link_libraries(ugdr_worker
 add_library(ugdr_gpu STATIC
     src/gpu/cuda_ipc_memory.cu
     src/gpu/gpu.cu
+    src/gpu/persistent_copy.cu
 )
 target_include_directories(ugdr_gpu
     PUBLIC
