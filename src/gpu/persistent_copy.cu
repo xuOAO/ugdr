@@ -16,6 +16,184 @@ namespace {
 constexpr std::uint8_t kPayloadGuardByte = 0xd3;
 constexpr std::uint8_t kPayloadInitialTargetByte = 0xa5;
 
+__device__ __forceinline__ void copy_cg_1(const std::uint8_t *source,
+                                          std::uint8_t *target) noexcept {
+    std::uint32_t value = 0;
+    asm volatile("ld.global.cg.u8 %0, [%1];" : "=r"(value) : "l"(source) : "memory");
+    asm volatile("st.global.cg.u8 [%0], %1;" : : "l"(target), "r"(value) : "memory");
+}
+
+__device__ __forceinline__ void copy_cg_2(const std::uint8_t *source,
+                                          std::uint8_t *target) noexcept {
+    std::uint32_t value = 0;
+    asm volatile("ld.global.cg.u16 %0, [%1];" : "=r"(value) : "l"(source) : "memory");
+    asm volatile("st.global.cg.u16 [%0], %1;" : : "l"(target), "r"(value) : "memory");
+}
+
+__device__ __forceinline__ void copy_cg_4(const std::uint8_t *source,
+                                          std::uint8_t *target) noexcept {
+    std::uint32_t value = 0;
+    asm volatile("ld.global.cg.u32 %0, [%1];" : "=r"(value) : "l"(source) : "memory");
+    asm volatile("st.global.cg.u32 [%0], %1;" : : "l"(target), "r"(value) : "memory");
+}
+
+__device__ __forceinline__ void copy_cg_8(const std::uint8_t *source,
+                                          std::uint8_t *target) noexcept {
+    std::uint64_t value = 0;
+    asm volatile("ld.global.cg.u64 %0, [%1];" : "=l"(value) : "l"(source) : "memory");
+    asm volatile("st.global.cg.u64 [%0], %1;" : : "l"(target), "l"(value) : "memory");
+}
+
+__device__ __forceinline__ void copy_cg_16(const std::uint8_t *source,
+                                           std::uint8_t *target) noexcept {
+    std::uint32_t x = 0;
+    std::uint32_t y = 0;
+    std::uint32_t z = 0;
+    std::uint32_t w = 0;
+    asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                 : "=r"(x), "=r"(y), "=r"(z), "=r"(w)
+                 : "l"(source)
+                 : "memory");
+    asm volatile("st.global.cg.v4.u32 [%0], {%1, %2, %3, %4};"
+                 :
+                 : "l"(target), "r"(x), "r"(y), "r"(z), "r"(w)
+                 : "memory");
+}
+
+__device__ __forceinline__ void copy_cg_narrow(const std::uint8_t *source,
+                                               std::uint8_t *target,
+                                               std::uint32_t width) noexcept {
+    switch (width) {
+    case 8:
+        copy_cg_8(source, target);
+        break;
+    case 4:
+        copy_cg_4(source, target);
+        break;
+    case 2:
+        copy_cg_2(source, target);
+        break;
+    default:
+        copy_cg_1(source, target);
+        break;
+    }
+}
+
+__device__ __forceinline__ std::uint32_t largest_safe_narrow_width(
+    const std::uint8_t *source, const std::uint8_t *target,
+    std::uint32_t remaining) noexcept {
+    const std::uintptr_t combined = reinterpret_cast<std::uintptr_t>(source) |
+                                    reinterpret_cast<std::uintptr_t>(target);
+    for (std::uint32_t width = 8; width != 0; width >>= 1) {
+        if (remaining >= width && (combined & (width - 1)) == 0) {
+            return width;
+        }
+    }
+    return 1;
+}
+
+__device__ __forceinline__ void copy_cg_narrow_serial(const std::uint8_t *source,
+                                                      std::uint8_t *target,
+                                                      std::uint32_t bytes) noexcept {
+    while (bytes != 0) {
+        const std::uint32_t width = largest_safe_narrow_width(source, target, bytes);
+        copy_cg_narrow(source, target, width);
+        source += width;
+        target += width;
+        bytes -= width;
+    }
+}
+
+__device__ __forceinline__ std::uint32_t steady_copy_width(
+    const std::uint8_t *source, const std::uint8_t *target) noexcept {
+    const std::uintptr_t different_bits = reinterpret_cast<std::uintptr_t>(source) ^
+                                          reinterpret_cast<std::uintptr_t>(target);
+    if ((different_bits & 15U) == 0) {
+        return 16;
+    }
+    if ((different_bits & 7U) == 0) {
+        return 8;
+    }
+    if ((different_bits & 3U) == 0) {
+        return 4;
+    }
+    if ((different_bits & 1U) == 0) {
+        return 2;
+    }
+    return 1;
+}
+
+__device__ __forceinline__ std::uint64_t warp_sum(std::uint64_t value) noexcept {
+    constexpr unsigned kFullWarp = 0xffffffffU;
+    for (int delta = 16; delta != 0; delta >>= 1) {
+        value += __shfl_down_sync(kFullWarp, value, delta);
+    }
+    return value;
+}
+
+__device__ __forceinline__ void copy_cg_warp(const std::uint8_t *source,
+                                             std::uint8_t *target, std::uint32_t length,
+                                             CopyAccessCounts *counts) noexcept {
+    const std::uint32_t lane = threadIdx.x & 31U;
+    const std::uint32_t width = steady_copy_width(source, target);
+    const std::uintptr_t source_address = reinterpret_cast<std::uintptr_t>(source);
+    std::uint32_t prefix =
+        static_cast<std::uint32_t>((0U - source_address) & (width - 1U));
+    if (prefix > length) {
+        prefix = length;
+    }
+
+    std::uint64_t local_vector_bytes = 0;
+    std::uint64_t local_narrow_bytes = 0;
+    if (lane == 0 && prefix != 0) {
+        copy_cg_narrow_serial(source, target, prefix);
+        local_narrow_bytes += prefix;
+    }
+
+    source += prefix;
+    target += prefix;
+    const std::uint32_t remaining = length - prefix;
+    const std::uint32_t unit_count = remaining / width;
+    for (std::uint32_t unit = lane; unit < unit_count; unit += 32) {
+        const std::uint32_t offset = unit * width;
+        if (width == 16) {
+            copy_cg_16(source + offset, target + offset);
+            local_vector_bytes += 16;
+        } else {
+            copy_cg_narrow(source + offset, target + offset, width);
+            local_narrow_bytes += width;
+        }
+    }
+
+    const std::uint32_t body_bytes = unit_count * width;
+    const std::uint32_t tail = remaining - body_bytes;
+    if (lane == 0 && tail != 0) {
+        copy_cg_narrow_serial(source + body_bytes, target + body_bytes, tail);
+        local_narrow_bytes += tail;
+    }
+
+    if (counts != nullptr) {
+        const std::uint64_t vector_bytes = warp_sum(local_vector_bytes);
+        const std::uint64_t narrow_bytes = warp_sum(local_narrow_bytes);
+        if (lane == 0) {
+            counts->copied_bytes = vector_bytes + narrow_bytes;
+            counts->vector_128_bytes = vector_bytes;
+            counts->narrow_bytes = narrow_bytes;
+        }
+    }
+}
+
+__global__ void persistent_copy_core_test_kernel(std::uint64_t stage_buffer_base, CopyTask task,
+                                                 std::uint64_t access_counts_address) {
+    const auto *const source = reinterpret_cast<const std::uint8_t *>(
+        static_cast<std::uintptr_t>(stage_buffer_base + task.relative_offset));
+    auto *const target =
+        reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(task.target_address));
+    auto *const counts =
+        reinterpret_cast<CopyAccessCounts *>(static_cast<std::uintptr_t>(access_counts_address));
+    copy_cg_warp(source, target, task.length, counts);
+}
+
 int cuda_status(cudaError_t status) noexcept {
     switch (status) {
     case cudaSuccess:
@@ -150,6 +328,16 @@ int initialize_persistent_copy_device(std::uint32_t device_ordinal) noexcept {
         return EOPNOTSUPP;
     }
     return cuda_status(cudaFree(nullptr));
+}
+
+int launch_persistent_copy_core_test(std::uint64_t stage_buffer_base, const CopyTask &task,
+                                     std::uint64_t access_counts_address) noexcept {
+    if (stage_buffer_base == 0 || task.target_address == 0 || task.length == 0 ||
+        access_counts_address == 0) {
+        return EINVAL;
+    }
+    persistent_copy_core_test_kernel<<<1, 32>>>(stage_buffer_base, task, access_counts_address);
+    return cuda_status(cudaGetLastError());
 }
 
 MappedPinnedMemory::~MappedPinnedMemory() {
@@ -315,8 +503,16 @@ int PersistentCopyPayloadBuffer::prepare(std::uint64_t seed) noexcept {
 }
 
 int PersistentCopyPayloadBuffer::verify(std::uint64_t seed, PayloadCheck *check) const noexcept {
+    return verify_copy(seed, 0, 0, payload_capacity_, check);
+}
+
+int PersistentCopyPayloadBuffer::verify_copy(std::uint64_t seed, std::size_t source_offset,
+                                             std::size_t target_offset, std::size_t length,
+                                             PayloadCheck *check) const noexcept {
     std::size_t allocation_size = 0;
     if (check == nullptr || empty() ||
+        source_offset > payload_capacity_ || length > payload_capacity_ - source_offset ||
+        target_offset > payload_capacity_ || length > payload_capacity_ - target_offset ||
         !checked_allocation_size(payload_capacity_, guard_bytes_, &allocation_size)) {
         return EINVAL;
     }
@@ -338,7 +534,11 @@ int PersistentCopyPayloadBuffer::verify(std::uint64_t seed, PayloadCheck *check)
             }
         }
         for (std::size_t index = 0; index < payload_capacity_; ++index) {
-            if (observed[guard_bytes_ + index] != persistent_copy_payload_byte(seed, index)) {
+            std::uint8_t expected = kPayloadInitialTargetByte;
+            if (index >= target_offset && index - target_offset < length) {
+                expected = persistent_copy_payload_byte(seed, source_offset + index - target_offset);
+            }
+            if (observed[guard_bytes_ + index] != expected) {
                 if (result.mismatch_count == 0) {
                     result.first_mismatch = index;
                 }

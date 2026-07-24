@@ -38,10 +38,18 @@ struct alignas(16) CopyCompletion {
     CopyTaskResult result = CopyTaskResult::success;
 };
 
+struct alignas(16) CopyAccessCounts {
+    std::uint64_t copied_bytes = 0;
+    std::uint64_t vector_128_bytes = 0;
+    std::uint64_t narrow_bytes = 0;
+};
+
 static_assert(std::is_standard_layout_v<CopyTask>);
 static_assert(std::is_trivially_copyable_v<CopyTask>);
 static_assert(std::is_standard_layout_v<CopyCompletion>);
 static_assert(std::is_trivially_copyable_v<CopyCompletion>);
+static_assert(std::is_standard_layout_v<CopyAccessCounts>);
+static_assert(std::is_trivially_copyable_v<CopyAccessCounts>);
 static_assert(sizeof(CopyTask) == 32);
 static_assert(sizeof(CopyCompletion) == 16);
 static_assert(offsetof(CopyTask, task_id) == 0);
@@ -66,6 +74,8 @@ struct PersistentCopyConfig {
 
 int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept;
 int initialize_persistent_copy_device(std::uint32_t device_ordinal) noexcept;
+int launch_persistent_copy_core_test(std::uint64_t stage_buffer_base, const CopyTask &task,
+                                     std::uint64_t access_counts_address) noexcept;
 
 struct PersistentCopyResult {
     std::uint32_t schema_version = kPersistentCopyResultSchemaVersion;
@@ -145,6 +155,8 @@ class PersistentCopyPayloadBuffer {
                         PersistentCopyPayloadBuffer *buffer) noexcept;
     int prepare(std::uint64_t seed) noexcept;
     int verify(std::uint64_t seed, PayloadCheck *check) const noexcept;
+    int verify_copy(std::uint64_t seed, std::size_t source_offset, std::size_t target_offset,
+                    std::size_t length, PayloadCheck *check) const noexcept;
     int make_task(std::uint64_t task_id, std::uint64_t target_address, std::size_t length,
                   std::uint32_t relative_offset, CopyTask *task) const noexcept;
     int reset() noexcept;

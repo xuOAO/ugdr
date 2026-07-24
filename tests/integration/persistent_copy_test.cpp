@@ -188,11 +188,103 @@ int gpu_resource_smoke() {
     return 0;
 }
 
+int copy_core_matrix_smoke() {
+    constexpr std::size_t max_payload_bytes = ugdr::gpu::kPersistentCopyMaxPayloadBytes;
+    constexpr std::size_t max_offset = 15;
+    constexpr std::size_t payload_capacity = max_payload_bytes + max_offset;
+    constexpr std::size_t guard_bytes = 16;
+    constexpr std::uint64_t seed = UINT64_C(0xc031c0dec031c0de);
+    constexpr std::size_t lengths[]{1, 15, 16, 17, 8191, 8192};
+
+    ugdr::gpu::PersistentCopyPayloadBuffer payload;
+    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(payload_capacity, guard_bytes, &payload) !=
+        0) {
+        return 20;
+    }
+    if ((payload.stage_buffer_base() & 15U) != 0 || (payload.target_address() & 15U) != 0) {
+        return 21;
+    }
+
+    ugdr::gpu::MappedPinnedMemory access_counts_memory;
+    if (ugdr::gpu::MappedPinnedMemory::allocate(sizeof(ugdr::gpu::CopyAccessCounts),
+                                                 &access_counts_memory) != 0) {
+        return 22;
+    }
+    auto *const access_counts =
+        static_cast<ugdr::gpu::CopyAccessCounts *>(access_counts_memory.host_data());
+
+    std::uint64_t task_id = 1;
+    std::size_t case_count = 0;
+    for (std::uint32_t source_offset = 0; source_offset <= max_offset; ++source_offset) {
+        for (std::uint32_t target_offset = 0; target_offset <= max_offset; ++target_offset) {
+            for (const std::size_t length : lengths) {
+                if (payload.prepare(seed) != 0) {
+                    return 23;
+                }
+                ugdr::gpu::CopyTask task;
+                if (payload.make_task(task_id++, payload.target_address() + target_offset, length,
+                                      source_offset, &task) != 0) {
+                    return 24;
+                }
+                std::memset(access_counts, 0xa5, sizeof(*access_counts));
+                if (ugdr::gpu::launch_persistent_copy_core_test(
+                        payload.stage_buffer_base(), task,
+                        access_counts_memory.device_address()) != 0 ||
+                    cuCtxSynchronize() != CUDA_SUCCESS) {
+                    return 25;
+                }
+
+                const std::uint64_t source_address =
+                    payload.stage_buffer_base() + source_offset;
+                const std::uint64_t target_address = payload.target_address() + target_offset;
+                std::size_t expected_vector_bytes = 0;
+                if ((source_address & 15U) == (target_address & 15U)) {
+                    std::size_t prefix = (16 - (source_address & 15U)) & 15U;
+                    if (prefix > length) {
+                        prefix = length;
+                    }
+                    expected_vector_bytes = ((length - prefix) / 16) * 16;
+                }
+                if (access_counts->copied_bytes != length ||
+                    access_counts->vector_128_bytes != expected_vector_bytes ||
+                    access_counts->narrow_bytes != length - expected_vector_bytes) {
+                    return 26;
+                }
+
+                ugdr::gpu::PayloadCheck check;
+                if (payload.verify_copy(seed, source_offset, target_offset, length, &check) != 0 ||
+                    !check.payload_matches || !check.guards_intact || check.mismatch_count != 0 ||
+                    check.first_mismatch != payload_capacity) {
+                    return 27;
+                }
+                ++case_count;
+            }
+        }
+    }
+    if (case_count != 16 * 16 * 6) {
+        return 28;
+    }
+
+    ugdr::gpu::CopyTask valid_task;
+    if (payload.make_task(task_id, payload.target_address(), 1, 0, &valid_task) != 0 ||
+        ugdr::gpu::launch_persistent_copy_core_test(
+            0, valid_task, access_counts_memory.device_address()) != EINVAL ||
+        ugdr::gpu::launch_persistent_copy_core_test(payload.stage_buffer_base(), valid_task, 0) !=
+            EINVAL) {
+        return 29;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
     if (!common_contract_smoke()) {
         return 1;
     }
-    return gpu_resource_smoke();
+    const int resource_status = gpu_resource_smoke();
+    if (resource_status != 0) {
+        return resource_status;
+    }
+    return copy_core_matrix_smoke();
 }
