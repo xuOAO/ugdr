@@ -310,7 +310,7 @@ int direct_atomic_queue_smoke() {
     if (ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, payload.stage_buffer_base(), &queue) !=
             0 ||
         queue.capacity() != capacity || queue.copy_warps() != 4 ||
-        queue.host_meta_bytes() < capacity * 2 * 64 || queue.start() != 0 ||
+        queue.host_meta_bytes() != 64 + capacity * 64 || queue.start() != 0 ||
         !queue.running() || !queue.accepting()) {
         return 31;
     }

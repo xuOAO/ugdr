@@ -104,7 +104,7 @@ __device__ __forceinline__ void copy_cg_narrow_serial(const std::uint8_t *source
     }
 }
 
-__device__ __forceinline__ std::uint32_t steady_copy_width(
+__device__ __forceinline__ std::uint32_t common_bulk_width(
     const std::uint8_t *source, const std::uint8_t *target) noexcept {
     const std::uintptr_t different_bits = reinterpret_cast<std::uintptr_t>(source) ^
                                           reinterpret_cast<std::uintptr_t>(target);
@@ -123,63 +123,86 @@ __device__ __forceinline__ std::uint32_t steady_copy_width(
     return 1;
 }
 
-__device__ __forceinline__ std::uint64_t warp_sum(std::uint64_t value) noexcept {
-    constexpr unsigned kFullWarp = 0xffffffffU;
-    for (int delta = 16; delta != 0; delta >>= 1) {
-        value += __shfl_down_sync(kFullWarp, value, delta);
+template <std::uint32_t Width>
+__device__ __forceinline__ void copy_cg_narrow_bulk_warp(const std::uint8_t *source,
+                                                         std::uint8_t *target,
+                                                         std::uint32_t unit_count,
+                                                         std::uint32_t lane) noexcept {
+    for (std::uint32_t unit = lane; unit < unit_count; unit += 32) {
+        const std::uint32_t offset = unit * Width;
+        copy_cg_narrow(source + offset, target + offset, Width);
     }
-    return value;
 }
 
 __device__ __forceinline__ void copy_cg_warp(const std::uint8_t *source,
-                                             std::uint8_t *target, std::uint32_t length,
-                                             CopyAccessCounts *counts) noexcept {
+                                             std::uint8_t *target,
+                                             std::uint32_t length) noexcept {
     const std::uint32_t lane = threadIdx.x & 31U;
-    const std::uint32_t width = steady_copy_width(source, target);
+    const std::uint32_t width = common_bulk_width(source, target);
     const std::uintptr_t source_address = reinterpret_cast<std::uintptr_t>(source);
-    std::uint32_t prefix =
-        static_cast<std::uint32_t>((0U - source_address) & (width - 1U));
+    const std::uintptr_t misalignment = source_address & (width - 1U);
+    std::uint32_t prefix = static_cast<std::uint32_t>(
+        (width - misalignment) & (width - 1U));
     if (prefix > length) {
         prefix = length;
     }
 
-    std::uint64_t local_vector_bytes = 0;
-    std::uint64_t local_narrow_bytes = 0;
     if (lane == 0 && prefix != 0) {
         copy_cg_narrow_serial(source, target, prefix);
-        local_narrow_bytes += prefix;
     }
 
     source += prefix;
     target += prefix;
     const std::uint32_t remaining = length - prefix;
     const std::uint32_t unit_count = remaining / width;
-    for (std::uint32_t unit = lane; unit < unit_count; unit += 32) {
-        const std::uint32_t offset = unit * width;
-        if (width == 16) {
+    switch (width) {
+    case 16:
+        for (std::uint32_t unit = lane; unit < unit_count; unit += 32) {
+            const std::uint32_t offset = unit * 16;
             copy_cg_16(source + offset, target + offset);
-            local_vector_bytes += 16;
-        } else {
-            copy_cg_narrow(source + offset, target + offset, width);
-            local_narrow_bytes += width;
         }
+        break;
+    case 8:
+        copy_cg_narrow_bulk_warp<8>(source, target, unit_count, lane);
+        break;
+    case 4:
+        copy_cg_narrow_bulk_warp<4>(source, target, unit_count, lane);
+        break;
+    case 2:
+        copy_cg_narrow_bulk_warp<2>(source, target, unit_count, lane);
+        break;
+    default:
+        copy_cg_narrow_bulk_warp<1>(source, target, unit_count, lane);
+        break;
     }
 
     const std::uint32_t body_bytes = unit_count * width;
     const std::uint32_t tail = remaining - body_bytes;
     if (lane == 0 && tail != 0) {
         copy_cg_narrow_serial(source + body_bytes, target + body_bytes, tail);
-        local_narrow_bytes += tail;
     }
+}
 
-    if (counts != nullptr) {
-        const std::uint64_t vector_bytes = warp_sum(local_vector_bytes);
-        const std::uint64_t narrow_bytes = warp_sum(local_narrow_bytes);
-        if (lane == 0) {
-            counts->copied_bytes = vector_bytes + narrow_bytes;
-            counts->vector_128_bytes = vector_bytes;
-            counts->narrow_bytes = narrow_bytes;
-        }
+__device__ __forceinline__ void copy_cg_warp_counted(const std::uint8_t *source,
+                                                     std::uint8_t *target,
+                                                     std::uint32_t length,
+                                                     CopyAccessCounts *counts) noexcept {
+    const std::uint32_t width = common_bulk_width(source, target);
+    const std::uintptr_t source_address = reinterpret_cast<std::uintptr_t>(source);
+    const std::uintptr_t misalignment = source_address & (width - 1U);
+    std::uint32_t prefix = static_cast<std::uint32_t>(
+        (width - misalignment) & (width - 1U));
+    if (prefix > length) {
+        prefix = length;
+    }
+    copy_cg_warp(source, target, length);
+    __syncwarp();
+    if ((threadIdx.x & 31U) == 0) {
+        const std::uint64_t vector_bytes =
+            width == 16 ? ((length - prefix) / 16) * 16 : 0;
+        counts->copied_bytes = length;
+        counts->vector_128_bytes = vector_bytes;
+        counts->narrow_bytes = length - vector_bytes;
     }
 }
 
@@ -191,29 +214,28 @@ __global__ void persistent_copy_core_test_kernel(std::uint64_t stage_buffer_base
         reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(task.target_address));
     auto *const counts =
         reinterpret_cast<CopyAccessCounts *>(static_cast<std::uintptr_t>(access_counts_address));
-    copy_cg_warp(source, target, task.length, counts);
+    copy_cg_warp_counted(source, target, task.length, counts);
 }
 
 struct alignas(64) DirectAtomicControl {
     std::uint64_t task_tail;
-    std::uint64_t task_claim;
-    std::uint64_t completion_reserve;
+    std::uint64_t task_head;
+    std::uint64_t completion_tail;
     std::uint64_t stop_requested;
 };
 
-struct alignas(64) DirectAtomicTaskSlot {
+struct alignas(32) DirectAtomicTaskSlot {
     CopyTask task;
-    std::uint64_t sequence;
 };
 
-struct alignas(64) DirectAtomicCompletionSlot {
+struct alignas(32) DirectAtomicCompletionSlot {
     CopyCompletion completion;
     std::uint64_t sequence;
 };
 
 static_assert(sizeof(DirectAtomicControl) == 64);
-static_assert(sizeof(DirectAtomicTaskSlot) == 64);
-static_assert(sizeof(DirectAtomicCompletionSlot) == 64);
+static_assert(sizeof(DirectAtomicTaskSlot) == 32);
+static_assert(sizeof(DirectAtomicCompletionSlot) == 32);
 
 __device__ __forceinline__ std::uint64_t system_load_acquire(
     const std::uint64_t *address) noexcept {
@@ -268,17 +290,17 @@ __global__ void direct_atomic_kernel(DirectAtomicControl *control,
         bool should_stop = false;
         if (lane == 0) {
             const std::uint64_t tail = system_load_acquire(&control->task_tail);
-            std::uint64_t claim = system_load_acquire(&control->task_claim);
-            if (claim < tail &&
-                system_atomic_cas(&control->task_claim, claim, claim + 1) == claim) {
-                task_index = claim;
-            } else if (claim >= tail &&
+            const std::uint64_t head = system_load_acquire(&control->task_head);
+            if (head < tail &&
+                system_atomic_cas(&control->task_head, head, head + 1) == head) {
+                task_index = head;
+            } else if (head >= tail &&
                        system_load_acquire(&control->stop_requested) != 0) {
                 const std::uint64_t final_tail =
                     system_load_acquire(&control->task_tail);
-                const std::uint64_t final_claim =
-                    system_load_acquire(&control->task_claim);
-                should_stop = final_claim >= final_tail;
+                const std::uint64_t final_head =
+                    system_load_acquire(&control->task_head);
+                should_stop = final_head >= final_tail;
             }
         }
         task_index = __shfl_sync(kFullWarp, task_index, 0);
@@ -294,42 +316,26 @@ __global__ void direct_atomic_kernel(DirectAtomicControl *control,
         }
 
         DirectAtomicTaskSlot *const task_slot = &task_slots[task_index % capacity];
-        if (lane == 0) {
-            while (system_load_acquire(&task_slot->sequence) != task_index + 1) {
-                __nanosleep(64);
-            }
-        }
-        __syncwarp();
-
         CopyTask task{};
         if (lane == 0) {
             task = task_slot->task;
         }
-        task.task_id = __shfl_sync(kFullWarp, task.task_id, 0);
         task.target_address = __shfl_sync(kFullWarp, task.target_address, 0);
         task.length = __shfl_sync(kFullWarp, task.length, 0);
         task.relative_offset = __shfl_sync(kFullWarp, task.relative_offset, 0);
-        if (lane == 0) {
-            system_store_release(&task_slot->sequence, task_index + capacity);
-        }
 
         const auto *const source = reinterpret_cast<const std::uint8_t *>(
             static_cast<std::uintptr_t>(stage_buffer_base + task.relative_offset));
         auto *const target =
             reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(task.target_address));
-        copy_cg_warp(source, target, task.length, nullptr);
+        copy_cg_warp(source, target, task.length);
+        __syncwarp();
 
-        std::uint64_t completion_index = 0;
         if (lane == 0) {
-            completion_index = system_atomic_add(&control->completion_reserve, 1);
-        }
-        completion_index = __shfl_sync(kFullWarp, completion_index, 0);
-        DirectAtomicCompletionSlot *const completion_slot =
-            &completion_slots[completion_index % capacity];
-        if (lane == 0) {
-            while (system_load_acquire(&completion_slot->sequence) != completion_index) {
-                __nanosleep(64);
-            }
+            const std::uint64_t completion_index =
+                system_atomic_add(&control->completion_tail, 1);
+            DirectAtomicCompletionSlot *const completion_slot =
+                &completion_slots[completion_index % capacity];
             completion_slot->completion.task_id = task.task_id;
             completion_slot->completion.result = CopyTaskResult::success;
             system_store_release(&completion_slot->sequence, completion_index + 1);
@@ -827,13 +833,6 @@ int DirectAtomicQueue::start() noexcept {
         return EINVAL;
     }
     std::memset(memory_.host_data(), 0, memory_.size());
-    auto *const task_slots = direct_atomic_task_slots(memory_.host_data());
-    auto *const completion_slots =
-        direct_atomic_completion_slots(memory_.host_data(), capacity_);
-    for (std::size_t index = 0; index < capacity_; ++index) {
-        task_slots[index].sequence = index;
-        completion_slots[index].sequence = index;
-    }
     submit_tail_ = 0;
     completion_head_ = 0;
     accepting_ = true;
@@ -869,11 +868,7 @@ int DirectAtomicQueue::try_submit(const CopyTask &task) noexcept {
     auto *const control = direct_atomic_control(memory_.host_data());
     auto *const slot =
         &direct_atomic_task_slots(memory_.host_data())[submit_tail_ % capacity_];
-    if (host_load_acquire(&slot->sequence) != submit_tail_) {
-        return EAGAIN;
-    }
     slot->task = task;
-    host_store_release(&slot->sequence, submit_tail_ + 1);
     ++submit_tail_;
     host_store_release(&control->task_tail, submit_tail_);
     return 0;
@@ -889,7 +884,6 @@ int DirectAtomicQueue::try_poll(CopyCompletion *completion) noexcept {
         return EAGAIN;
     }
     *completion = slot->completion;
-    host_store_release(&slot->sequence, completion_head_ + capacity_);
     ++completion_head_;
     return 0;
 }
