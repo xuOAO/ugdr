@@ -83,6 +83,10 @@ bool common_contract_smoke() {
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
     }
+    config.copy_warps = 2;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
     config.model = ugdr::gpu::PersistentCopyModel::warp_specialized;
     config.copy_warps = 32;
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
@@ -366,6 +370,8 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
     ugdr::gpu::DirectAtomicQueue queue;
     if (ugdr::gpu::DirectAtomicQueue::allocate(3, 4, 4, payload.stage_buffer_base(), &queue) !=
             EINVAL ||
+        ugdr::gpu::DirectAtomicQueue::allocate(
+            capacity, 2, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
         ugdr::gpu::DirectAtomicQueue::allocate(8, 4, 16, payload.stage_buffer_base(), &queue) !=
             EINVAL ||
         ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, 3, payload.stage_buffer_base(),

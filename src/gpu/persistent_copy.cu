@@ -412,13 +412,16 @@ __device__ __forceinline__ bool shared_atomic_claim(
            expected;
 }
 
-template <std::uint32_t TasksPerClaim>
+template <std::uint32_t TasksPerClaim,
+          std::uint32_t CopyWarps>
 __global__ void direct_atomic_kernel(DirectAtomicControl *control,
                                      DirectAtomicTaskSlot *task_slots,
                                      DirectAtomicCompletionSlot *completion_slots,
                                      std::uint64_t capacity_mask,
                                      std::uint64_t stage_buffer_base) {
     static_assert(TasksPerClaim > 0);
+    static_assert(CopyWarps == 4 || CopyWarps == 8 ||
+                  CopyWarps == 16 || CopyWarps == 32);
     constexpr std::uint64_t kNoTask = UINT64_MAX;
     constexpr unsigned kFullWarp = 0xffffffffU;
     const std::uint32_t lane = threadIdx.x & 31U;
@@ -498,12 +501,15 @@ __global__ void direct_atomic_kernel(DirectAtomicControl *control,
     }
 }
 
-template <std::uint32_t TasksPerBatch>
+template <std::uint32_t TasksPerBatch,
+          std::uint32_t CopyWarps>
 __global__ void dynamic_sharded_spsc_kernel(
     DynamicShardedSpscControl *controls, DynamicShardedSpscTaskSlot *task_slots,
     DynamicShardedSpscCompletionSlot *completion_slots, std::uint64_t lane_capacity,
     std::uint64_t lane_capacity_mask, std::uint64_t stage_buffer_base) {
     static_assert(TasksPerBatch > 0);
+    static_assert(CopyWarps == 4 || CopyWarps == 8 ||
+                  CopyWarps == 16 || CopyWarps == 32);
     constexpr unsigned kFullWarp = 0xffffffffU;
     const std::uint32_t lane = threadIdx.x & 31U;
     const std::uint32_t warp = threadIdx.x >> 5U;
@@ -586,15 +592,23 @@ __global__ void dynamic_sharded_spsc_kernel(
     }
 }
 
-template <std::uint32_t TasksPerBatch>
+template <std::uint32_t TasksPerBatch,
+          std::uint32_t CopyWarps>
 __global__ void static_partition_spsc_kernel(
     StaticPartitionSpscControl *control,
     StaticPartitionSpscTaskSlot *task_slots,
     StaticPartitionSpscCompletionSlot *completion_slots,
-    std::uint64_t capacity_mask, std::uint32_t copy_warps,
-    std::uint32_t copy_warp_shift, std::uint64_t stage_buffer_base) {
+    std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base) {
     static_assert(TasksPerBatch > 0);
     static_assert(TasksPerBatch <= 32);
+    static_assert(CopyWarps == 4 || CopyWarps == 8 ||
+                  CopyWarps == 16 || CopyWarps == 32);
+    constexpr std::uint32_t kCopyWarpShift =
+        CopyWarps == 4    ? 2
+        : CopyWarps == 8  ? 3
+        : CopyWarps == 16 ? 4
+                          : 5;
     constexpr unsigned kFullWarp = 0xffffffffU;
     const std::uint32_t lane = threadIdx.x & 31U;
     const std::uint32_t warp = threadIdx.x >> 5U;
@@ -613,7 +627,9 @@ __global__ void static_partition_spsc_kernel(
             }
             if (!should_stop && owned_index < task_tail) {
                 const std::uint64_t available =
-                    ((task_tail - 1 - owned_index) >> copy_warp_shift) + 1;
+                    ((task_tail - 1 - owned_index) >>
+                     kCopyWarpShift) +
+                    1;
                 task_count = static_cast<std::uint32_t>(
                     available < TasksPerBatch ? available : TasksPerBatch);
             }
@@ -631,7 +647,8 @@ __global__ void static_partition_spsc_kernel(
         }
 
         const std::uint64_t lane_task_index =
-            owned_index + static_cast<std::uint64_t>(lane) * copy_warps;
+            owned_index +
+            static_cast<std::uint64_t>(lane) * CopyWarps;
         CopyTask lane_task{};
         if (lane < task_count) {
             lane_task =
@@ -669,7 +686,7 @@ __global__ void static_partition_spsc_kernel(
                                  lane_task_index + 1);
         }
         owned_index +=
-            static_cast<std::uint64_t>(task_count) * copy_warps;
+            static_cast<std::uint64_t>(task_count) * CopyWarps;
     }
 }
 
@@ -1267,6 +1284,237 @@ __global__ void warp_specialized_pipeline_kernel(
     }
 }
 
+template <std::uint32_t TasksPerClaim,
+          std::uint32_t CopyWarps>
+void launch_direct_atomic_kernel(
+    DirectAtomicControl *control,
+    DirectAtomicTaskSlot *task_slots,
+    DirectAtomicCompletionSlot *completion_slots,
+    std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base) {
+    direct_atomic_kernel<TasksPerClaim, CopyWarps>
+        <<<1, CopyWarps * 32>>>(
+            control, task_slots, completion_slots,
+            capacity_mask, stage_buffer_base);
+}
+
+template <std::uint32_t CopyWarps>
+bool dispatch_direct_atomic_batch(
+    std::uint32_t device_batch,
+    DirectAtomicControl *control,
+    DirectAtomicTaskSlot *task_slots,
+    DirectAtomicCompletionSlot *completion_slots,
+    std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base) {
+#define UGDR_LAUNCH_DIRECT_ATOMIC_BATCH(batch)                  \
+    launch_direct_atomic_kernel<batch, CopyWarps>(              \
+        control, task_slots, completion_slots, capacity_mask,   \
+        stage_buffer_base)
+    switch (device_batch) {
+    case 1:
+        UGDR_LAUNCH_DIRECT_ATOMIC_BATCH(1);
+        return true;
+    case 2:
+        UGDR_LAUNCH_DIRECT_ATOMIC_BATCH(2);
+        return true;
+    case 4:
+        UGDR_LAUNCH_DIRECT_ATOMIC_BATCH(4);
+        return true;
+    case 8:
+        UGDR_LAUNCH_DIRECT_ATOMIC_BATCH(8);
+        return true;
+    case 16:
+        UGDR_LAUNCH_DIRECT_ATOMIC_BATCH(16);
+        return true;
+    case 32:
+        UGDR_LAUNCH_DIRECT_ATOMIC_BATCH(32);
+        return true;
+    default:
+        return false;
+    }
+#undef UGDR_LAUNCH_DIRECT_ATOMIC_BATCH
+}
+
+bool dispatch_direct_atomic_variant(
+    std::uint32_t copy_warps, std::uint32_t device_batch,
+    DirectAtomicControl *control,
+    DirectAtomicTaskSlot *task_slots,
+    DirectAtomicCompletionSlot *completion_slots,
+    std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base) {
+#define UGDR_DISPATCH_DIRECT_ATOMIC_WARPS(copy_warp_count)      \
+    case copy_warp_count:                                      \
+        return dispatch_direct_atomic_batch<copy_warp_count>(  \
+            device_batch, control, task_slots,                 \
+            completion_slots, capacity_mask,                   \
+            stage_buffer_base)
+    switch (copy_warps) {
+        UGDR_DISPATCH_DIRECT_ATOMIC_WARPS(4);
+        UGDR_DISPATCH_DIRECT_ATOMIC_WARPS(8);
+        UGDR_DISPATCH_DIRECT_ATOMIC_WARPS(16);
+        UGDR_DISPATCH_DIRECT_ATOMIC_WARPS(32);
+    default:
+        return false;
+    }
+#undef UGDR_DISPATCH_DIRECT_ATOMIC_WARPS
+}
+
+template <std::uint32_t TasksPerBatch,
+          std::uint32_t CopyWarps>
+void launch_dynamic_sharded_spsc_kernel(
+    DynamicShardedSpscControl *controls,
+    DynamicShardedSpscTaskSlot *task_slots,
+    DynamicShardedSpscCompletionSlot *completion_slots,
+    std::uint64_t lane_capacity,
+    std::uint64_t lane_capacity_mask,
+    std::uint64_t stage_buffer_base) {
+    dynamic_sharded_spsc_kernel<TasksPerBatch, CopyWarps>
+        <<<1, CopyWarps * 32>>>(
+            controls, task_slots, completion_slots,
+            lane_capacity, lane_capacity_mask,
+            stage_buffer_base);
+}
+
+template <std::uint32_t CopyWarps>
+bool dispatch_dynamic_sharded_spsc_batch(
+    std::uint32_t device_batch,
+    DynamicShardedSpscControl *controls,
+    DynamicShardedSpscTaskSlot *task_slots,
+    DynamicShardedSpscCompletionSlot *completion_slots,
+    std::uint64_t lane_capacity,
+    std::uint64_t lane_capacity_mask,
+    std::uint64_t stage_buffer_base) {
+#define UGDR_LAUNCH_DYNAMIC_SPSC_BATCH(batch)                   \
+    launch_dynamic_sharded_spsc_kernel<batch, CopyWarps>(       \
+        controls, task_slots, completion_slots, lane_capacity,  \
+        lane_capacity_mask, stage_buffer_base)
+    switch (device_batch) {
+    case 1:
+        UGDR_LAUNCH_DYNAMIC_SPSC_BATCH(1);
+        return true;
+    case 2:
+        UGDR_LAUNCH_DYNAMIC_SPSC_BATCH(2);
+        return true;
+    case 4:
+        UGDR_LAUNCH_DYNAMIC_SPSC_BATCH(4);
+        return true;
+    case 8:
+        UGDR_LAUNCH_DYNAMIC_SPSC_BATCH(8);
+        return true;
+    case 16:
+        UGDR_LAUNCH_DYNAMIC_SPSC_BATCH(16);
+        return true;
+    case 32:
+        UGDR_LAUNCH_DYNAMIC_SPSC_BATCH(32);
+        return true;
+    default:
+        return false;
+    }
+#undef UGDR_LAUNCH_DYNAMIC_SPSC_BATCH
+}
+
+bool dispatch_dynamic_sharded_spsc_variant(
+    std::uint32_t copy_warps, std::uint32_t device_batch,
+    DynamicShardedSpscControl *controls,
+    DynamicShardedSpscTaskSlot *task_slots,
+    DynamicShardedSpscCompletionSlot *completion_slots,
+    std::uint64_t lane_capacity,
+    std::uint64_t lane_capacity_mask,
+    std::uint64_t stage_buffer_base) {
+#define UGDR_DISPATCH_DYNAMIC_SPSC_WARPS(copy_warp_count)       \
+    case copy_warp_count:                                      \
+        return dispatch_dynamic_sharded_spsc_batch<            \
+            copy_warp_count>(                                  \
+            device_batch, controls, task_slots,                \
+            completion_slots, lane_capacity,                   \
+            lane_capacity_mask, stage_buffer_base)
+    switch (copy_warps) {
+        UGDR_DISPATCH_DYNAMIC_SPSC_WARPS(4);
+        UGDR_DISPATCH_DYNAMIC_SPSC_WARPS(8);
+        UGDR_DISPATCH_DYNAMIC_SPSC_WARPS(16);
+        UGDR_DISPATCH_DYNAMIC_SPSC_WARPS(32);
+    default:
+        return false;
+    }
+#undef UGDR_DISPATCH_DYNAMIC_SPSC_WARPS
+}
+
+template <std::uint32_t TasksPerBatch,
+          std::uint32_t CopyWarps>
+void launch_static_partition_spsc_kernel(
+    StaticPartitionSpscControl *control,
+    StaticPartitionSpscTaskSlot *task_slots,
+    StaticPartitionSpscCompletionSlot *completion_slots,
+    std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base) {
+    static_partition_spsc_kernel<TasksPerBatch, CopyWarps>
+        <<<1, CopyWarps * 32>>>(
+            control, task_slots, completion_slots,
+            capacity_mask, stage_buffer_base);
+}
+
+template <std::uint32_t CopyWarps>
+bool dispatch_static_partition_spsc_batch(
+    std::uint32_t device_batch,
+    StaticPartitionSpscControl *control,
+    StaticPartitionSpscTaskSlot *task_slots,
+    StaticPartitionSpscCompletionSlot *completion_slots,
+    std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base) {
+#define UGDR_LAUNCH_STATIC_SPSC_BATCH(batch)                    \
+    launch_static_partition_spsc_kernel<batch, CopyWarps>(      \
+        control, task_slots, completion_slots, capacity_mask,   \
+        stage_buffer_base)
+    switch (device_batch) {
+    case 1:
+        UGDR_LAUNCH_STATIC_SPSC_BATCH(1);
+        return true;
+    case 2:
+        UGDR_LAUNCH_STATIC_SPSC_BATCH(2);
+        return true;
+    case 4:
+        UGDR_LAUNCH_STATIC_SPSC_BATCH(4);
+        return true;
+    case 8:
+        UGDR_LAUNCH_STATIC_SPSC_BATCH(8);
+        return true;
+    case 16:
+        UGDR_LAUNCH_STATIC_SPSC_BATCH(16);
+        return true;
+    case 32:
+        UGDR_LAUNCH_STATIC_SPSC_BATCH(32);
+        return true;
+    default:
+        return false;
+    }
+#undef UGDR_LAUNCH_STATIC_SPSC_BATCH
+}
+
+bool dispatch_static_partition_spsc_variant(
+    std::uint32_t copy_warps, std::uint32_t device_batch,
+    StaticPartitionSpscControl *control,
+    StaticPartitionSpscTaskSlot *task_slots,
+    StaticPartitionSpscCompletionSlot *completion_slots,
+    std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base) {
+#define UGDR_DISPATCH_STATIC_SPSC_WARPS(copy_warp_count)        \
+    case copy_warp_count:                                      \
+        return dispatch_static_partition_spsc_batch<           \
+            copy_warp_count>(                                  \
+            device_batch, control, task_slots,                 \
+            completion_slots, capacity_mask,                   \
+            stage_buffer_base)
+    switch (copy_warps) {
+        UGDR_DISPATCH_STATIC_SPSC_WARPS(4);
+        UGDR_DISPATCH_STATIC_SPSC_WARPS(8);
+        UGDR_DISPATCH_STATIC_SPSC_WARPS(16);
+        UGDR_DISPATCH_STATIC_SPSC_WARPS(32);
+    default:
+        return false;
+    }
+#undef UGDR_DISPATCH_STATIC_SPSC_WARPS
+}
+
 template <std::uint32_t TasksPerBatch,
           std::uint32_t SharedQueueDepth,
           std::uint32_t CopyClaimBatch = 2>
@@ -1531,6 +1779,11 @@ bool is_supported_device_batch(std::uint32_t value) noexcept {
     return value == 1 || value == 2 || value == 4 || value == 8 || value == 16 || value == 32;
 }
 
+bool is_supported_copy_warps(std::uint32_t value) noexcept {
+    return value == 4 || value == 8 ||
+           value == 16 || value == 32;
+}
+
 bool is_supported_shared_queue_depth(
     std::uint32_t value) noexcept {
     return value == 2 || value == 4 || value == 8 ||
@@ -1562,7 +1815,8 @@ bool dynamic_sharded_spsc_allocation_size(std::size_t capacity,
     constexpr std::size_t kPerSlotBytes =
         sizeof(DynamicShardedSpscTaskSlot) +
         sizeof(DynamicShardedSpscCompletionSlot);
-    if (lane_count == 0 || lane_count > 32 || !is_power_of_two(capacity) ||
+    if (!is_supported_copy_warps(lane_count) ||
+        !is_power_of_two(capacity) ||
         capacity < lane_count || capacity % lane_count != 0 ||
         !is_power_of_two(capacity / lane_count)) {
         return false;
@@ -1585,8 +1839,8 @@ bool static_partition_spsc_allocation_size(std::size_t capacity,
     constexpr std::size_t kPerSlotBytes =
         sizeof(StaticPartitionSpscTaskSlot) +
         sizeof(StaticPartitionSpscCompletionSlot);
-    if (copy_warps == 0 || copy_warps > 32 ||
-        !is_power_of_two(copy_warps) || !is_power_of_two(capacity) ||
+    if (!is_supported_copy_warps(copy_warps) ||
+        !is_power_of_two(capacity) ||
         capacity < copy_warps ||
         (capacity & (static_cast<std::size_t>(copy_warps) - 1)) != 0) {
         return false;
@@ -1805,6 +2059,10 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
         !is_supported_device_batch(config.device_batch) ||
         config.device_batch > config.outstanding_capacity || config.copy_warps == 0 ||
         config.copy_warps > 32 || config.warmup_tasks == 0 || config.iterations == 0) {
+        return EINVAL;
+    }
+    if (config.model == PersistentCopyModel::direct_atomic &&
+        !is_supported_copy_warps(config.copy_warps)) {
         return EINVAL;
     }
     if (config.model == PersistentCopyModel::dynamic_sharded_spsc) {
@@ -2171,10 +2429,11 @@ DirectAtomicQueue::~DirectAtomicQueue() {
 }
 
 int DirectAtomicQueue::allocate(std::size_t capacity, std::uint32_t copy_warps,
-                                std::uint32_t device_batch, std::uint64_t stage_buffer_base,
-                                DirectAtomicQueue *queue) noexcept {
+    std::uint32_t device_batch, std::uint64_t stage_buffer_base,
+    DirectAtomicQueue *queue) noexcept {
     std::size_t bytes = 0;
-    if (queue == nullptr || !queue->empty() || copy_warps == 0 || copy_warps > 32 ||
+    if (queue == nullptr || !queue->empty() ||
+        !is_supported_copy_warps(copy_warps) ||
         !is_supported_device_batch(device_batch) || device_batch > capacity ||
         stage_buffer_base == 0 || !direct_atomic_allocation_size(capacity, &bytes)) {
         return EINVAL;
@@ -2211,38 +2470,10 @@ int DirectAtomicQueue::start() noexcept {
     auto *const completion_slots_device = reinterpret_cast<DirectAtomicCompletionSlot *>(
         device_base + sizeof(DirectAtomicControl) +
         capacity_ * sizeof(DirectAtomicTaskSlot));
-    switch (device_batch_) {
-    case 1:
-        direct_atomic_kernel<1><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device, capacity_mask_,
-            stage_buffer_base_);
-        break;
-    case 2:
-        direct_atomic_kernel<2><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device, capacity_mask_,
-            stage_buffer_base_);
-        break;
-    case 4:
-        direct_atomic_kernel<4><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device, capacity_mask_,
-            stage_buffer_base_);
-        break;
-    case 8:
-        direct_atomic_kernel<8><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device, capacity_mask_,
-            stage_buffer_base_);
-        break;
-    case 16:
-        direct_atomic_kernel<16><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device, capacity_mask_,
-            stage_buffer_base_);
-        break;
-    case 32:
-        direct_atomic_kernel<32><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device, capacity_mask_,
-            stage_buffer_base_);
-        break;
-    default:
+    if (!dispatch_direct_atomic_variant(
+            copy_warps_, device_batch_, control_device,
+            task_slots_device, completion_slots_device,
+            capacity_mask_, stage_buffer_base_)) {
         running_ = false;
         accepting_ = false;
         return EINVAL;
@@ -2447,38 +2678,11 @@ int DynamicShardedSpscQueue::start() noexcept {
             device_base + lane_count_ *
                               sizeof(DynamicShardedSpscControl) +
             capacity_ * sizeof(DynamicShardedSpscTaskSlot));
-    switch (device_batch_) {
-    case 1:
-        dynamic_sharded_spsc_kernel<1><<<1, lane_count_ * 32>>>(
-            controls_device, task_slots_device, completion_slots_device,
-            lane_capacity_, lane_capacity_mask_, stage_buffer_base_);
-        break;
-    case 2:
-        dynamic_sharded_spsc_kernel<2><<<1, lane_count_ * 32>>>(
-            controls_device, task_slots_device, completion_slots_device,
-            lane_capacity_, lane_capacity_mask_, stage_buffer_base_);
-        break;
-    case 4:
-        dynamic_sharded_spsc_kernel<4><<<1, lane_count_ * 32>>>(
-            controls_device, task_slots_device, completion_slots_device,
-            lane_capacity_, lane_capacity_mask_, stage_buffer_base_);
-        break;
-    case 8:
-        dynamic_sharded_spsc_kernel<8><<<1, lane_count_ * 32>>>(
-            controls_device, task_slots_device, completion_slots_device,
-            lane_capacity_, lane_capacity_mask_, stage_buffer_base_);
-        break;
-    case 16:
-        dynamic_sharded_spsc_kernel<16><<<1, lane_count_ * 32>>>(
-            controls_device, task_slots_device, completion_slots_device,
-            lane_capacity_, lane_capacity_mask_, stage_buffer_base_);
-        break;
-    case 32:
-        dynamic_sharded_spsc_kernel<32><<<1, lane_count_ * 32>>>(
-            controls_device, task_slots_device, completion_slots_device,
-            lane_capacity_, lane_capacity_mask_, stage_buffer_base_);
-        break;
-    default:
+    if (!dispatch_dynamic_sharded_spsc_variant(
+            lane_count_, device_batch_, controls_device,
+            task_slots_device, completion_slots_device,
+            lane_capacity_, lane_capacity_mask_,
+            stage_buffer_base_)) {
         running_ = false;
         accepting_ = false;
         return EINVAL;
@@ -2748,42 +2952,10 @@ int StaticPartitionSpscQueue::start() noexcept {
         reinterpret_cast<StaticPartitionSpscCompletionSlot *>(
             device_base + sizeof(StaticPartitionSpscControl) +
             capacity_ * sizeof(StaticPartitionSpscTaskSlot));
-    std::uint32_t copy_warp_shift = 0;
-    for (std::uint32_t warps = copy_warps_; warps > 1; warps >>= 1) {
-        ++copy_warp_shift;
-    }
-    switch (device_batch_) {
-    case 1:
-        static_partition_spsc_kernel<1><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
-        break;
-    case 2:
-        static_partition_spsc_kernel<2><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
-        break;
-    case 4:
-        static_partition_spsc_kernel<4><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
-        break;
-    case 8:
-        static_partition_spsc_kernel<8><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
-        break;
-    case 16:
-        static_partition_spsc_kernel<16><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
-        break;
-    case 32:
-        static_partition_spsc_kernel<32><<<1, copy_warps_ * 32>>>(
-            control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
-        break;
-    default:
+    if (!dispatch_static_partition_spsc_variant(
+            copy_warps_, device_batch_, control_device,
+            task_slots_device, completion_slots_device,
+            capacity_mask_, stage_buffer_base_)) {
         running_ = false;
         accepting_ = false;
         return EINVAL;
