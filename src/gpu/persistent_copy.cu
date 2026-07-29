@@ -257,6 +257,7 @@ struct alignas(32) DirectAtomicTaskSlot {
 struct alignas(32) DirectAtomicCompletionSlot {
     CopyCompletion completion;
     std::uint64_t sequence;
+    std::uint64_t batch_start;
 };
 
 static_assert(sizeof(DirectAtomicControl) == 64);
@@ -302,24 +303,33 @@ __device__ __forceinline__ std::uint64_t system_atomic_add(std::uint64_t *addres
     return previous;
 }
 
+template <std::uint32_t TasksPerClaim>
 __global__ void direct_atomic_kernel(DirectAtomicControl *control,
                                      DirectAtomicTaskSlot *task_slots,
                                      DirectAtomicCompletionSlot *completion_slots,
                                      std::uint64_t capacity_mask,
                                      std::uint64_t stage_buffer_base) {
+    static_assert(TasksPerClaim > 0);
     constexpr std::uint64_t kNoTask = UINT64_MAX;
     constexpr unsigned kFullWarp = 0xffffffffU;
     const std::uint32_t lane = threadIdx.x & 31U;
 
     while (true) {
-        std::uint64_t task_index = kNoTask;
+        std::uint64_t task_base = kNoTask;
+        std::uint32_t task_count = 0;
         bool should_stop = false;
         if (lane == 0) {
             const std::uint64_t tail = system_load_acquire(&control->task_tail);
             const std::uint64_t head = system_load_acquire(&control->task_head);
-            if (head < tail &&
-                system_atomic_cas(&control->task_head, head, head + 1) == head) {
-                task_index = head;
+            if (head < tail) {
+                const std::uint64_t available = tail - head;
+                task_count = static_cast<std::uint32_t>(
+                    available < TasksPerClaim ? available : TasksPerClaim);
+                if (system_atomic_cas(&control->task_head, head, head + task_count) == head) {
+                    task_base = head;
+                } else {
+                    task_count = 0;
+                }
             } else if (head >= tail &&
                        system_load_acquire(&control->stop_requested) != 0) {
                 const std::uint64_t final_tail =
@@ -329,42 +339,52 @@ __global__ void direct_atomic_kernel(DirectAtomicControl *control,
                 should_stop = final_head >= final_tail;
             }
         }
-        task_index = __shfl_sync(kFullWarp, task_index, 0);
+        task_base = __shfl_sync(kFullWarp, task_base, 0);
+        task_count = __shfl_sync(kFullWarp, task_count, 0);
         should_stop = __shfl_sync(kFullWarp, should_stop, 0);
         if (should_stop) {
             return;
         }
-        if (task_index == kNoTask) {
+        if (task_base == kNoTask) {
             if (lane == 0) {
                 __nanosleep(64);
             }
             continue;
         }
 
-        DirectAtomicTaskSlot *const task_slot = &task_slots[task_index & capacity_mask];
-        CopyTask task{};
+        std::uint64_t completion_base = 0;
         if (lane == 0) {
-            task = task_slot->task;
+            completion_base = system_atomic_add(&control->completion_tail, task_count);
         }
-        task.target_address = __shfl_sync(kFullWarp, task.target_address, 0);
-        task.length = __shfl_sync(kFullWarp, task.length, 0);
-        task.relative_offset = __shfl_sync(kFullWarp, task.relative_offset, 0);
 
-        const auto *const source = reinterpret_cast<const std::uint8_t *>(
-            static_cast<std::uintptr_t>(stage_buffer_base + task.relative_offset));
-        auto *const target =
-            reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(task.target_address));
-        copy_cg_warp(source, target, task.length);
-        __syncwarp();
+#pragma unroll 1
+        for (std::uint32_t batch_index = 0; batch_index < task_count; ++batch_index) {
+            const std::uint64_t task_index = task_base + batch_index;
+            DirectAtomicTaskSlot *const task_slot = &task_slots[task_index & capacity_mask];
+            CopyTask task{};
+            if (lane == 0) {
+                task = task_slot->task;
+            }
+            task.target_address = __shfl_sync(kFullWarp, task.target_address, 0);
+            task.length = __shfl_sync(kFullWarp, task.length, 0);
+            task.relative_offset = __shfl_sync(kFullWarp, task.relative_offset, 0);
 
-        if (lane == 0) {
-            const std::uint64_t completion_index =
-                system_atomic_add(&control->completion_tail, 1);
-            DirectAtomicCompletionSlot *const completion_slot =
-                &completion_slots[completion_index & capacity_mask];
-            completion_slot->completion.task_id = task.task_id;
-            completion_slot->completion.result = CopyTaskResult::success;
-            system_store_release(&completion_slot->sequence, completion_index + 1);
+            const auto *const source = reinterpret_cast<const std::uint8_t *>(
+                static_cast<std::uintptr_t>(stage_buffer_base + task.relative_offset));
+            auto *const target =
+                reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(task.target_address));
+            copy_cg_warp(source, target, task.length);
+            __syncwarp();
+
+            if (lane == 0) {
+                const std::uint64_t completion_index = completion_base + batch_index;
+                DirectAtomicCompletionSlot *const completion_slot =
+                    &completion_slots[completion_index & capacity_mask];
+                completion_slot->completion.task_id = task.task_id;
+                completion_slot->completion.result = CopyTaskResult::success;
+                completion_slot->batch_start = batch_index == 0 ? 1 : 0;
+                system_store_release(&completion_slot->sequence, completion_index + 1);
+            }
         }
     }
 }
@@ -425,6 +445,10 @@ std::uint64_t pointer_address(const void *pointer) noexcept {
 
 bool is_power_of_two(std::size_t value) noexcept {
     return value != 0 && (value & (value - 1)) == 0;
+}
+
+bool is_supported_device_batch(std::uint32_t value) noexcept {
+    return value == 1 || value == 2 || value == 4 || value == 8 || value == 16 || value == 32;
 }
 
 bool direct_atomic_allocation_size(std::size_t capacity, std::size_t *bytes) noexcept {
@@ -509,7 +533,9 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
     if (config.payload_bytes == 0 || config.payload_bytes > kPersistentCopyMaxPayloadBytes ||
         config.parent_wr_bytes == 0 || !is_power_of_two(config.outstanding_capacity) ||
         config.host_batch == 0 ||
-        config.host_batch > config.outstanding_capacity || config.copy_warps == 0 ||
+        config.host_batch > config.outstanding_capacity ||
+        !is_supported_device_batch(config.device_batch) ||
+        config.device_batch > config.outstanding_capacity || config.copy_warps == 0 ||
         config.copy_warps > 32 || config.warmup_tasks == 0 || config.iterations == 0) {
         return EINVAL;
     }
@@ -842,10 +868,11 @@ DirectAtomicQueue::~DirectAtomicQueue() {
 }
 
 int DirectAtomicQueue::allocate(std::size_t capacity, std::uint32_t copy_warps,
-                                std::uint64_t stage_buffer_base,
+                                std::uint32_t device_batch, std::uint64_t stage_buffer_base,
                                 DirectAtomicQueue *queue) noexcept {
     std::size_t bytes = 0;
     if (queue == nullptr || !queue->empty() || copy_warps == 0 || copy_warps > 32 ||
+        !is_supported_device_batch(device_batch) || device_batch > capacity ||
         stage_buffer_base == 0 || !direct_atomic_allocation_size(capacity, &bytes)) {
         return EINVAL;
     }
@@ -856,6 +883,7 @@ int DirectAtomicQueue::allocate(std::size_t capacity, std::uint32_t copy_warps,
     queue->capacity_ = capacity;
     queue->capacity_mask_ = capacity - 1;
     queue->copy_warps_ = copy_warps;
+    queue->device_batch_ = device_batch;
     queue->stage_buffer_base_ = stage_buffer_base;
     return 0;
 }
@@ -867,6 +895,7 @@ int DirectAtomicQueue::start() noexcept {
     std::memset(memory_.host_data(), 0, memory_.size());
     submit_tail_ = 0;
     completion_head_ = 0;
+    completed_device_batches_ = 0;
     accepting_ = true;
     running_ = true;
 
@@ -879,9 +908,42 @@ int DirectAtomicQueue::start() noexcept {
     auto *const completion_slots_device = reinterpret_cast<DirectAtomicCompletionSlot *>(
         device_base + sizeof(DirectAtomicControl) +
         capacity_ * sizeof(DirectAtomicTaskSlot));
-    direct_atomic_kernel<<<1, copy_warps_ * 32>>>(
-        control_device, task_slots_device, completion_slots_device, capacity_mask_,
-        stage_buffer_base_);
+    switch (device_batch_) {
+    case 1:
+        direct_atomic_kernel<1><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device, capacity_mask_,
+            stage_buffer_base_);
+        break;
+    case 2:
+        direct_atomic_kernel<2><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device, capacity_mask_,
+            stage_buffer_base_);
+        break;
+    case 4:
+        direct_atomic_kernel<4><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device, capacity_mask_,
+            stage_buffer_base_);
+        break;
+    case 8:
+        direct_atomic_kernel<8><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device, capacity_mask_,
+            stage_buffer_base_);
+        break;
+    case 16:
+        direct_atomic_kernel<16><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device, capacity_mask_,
+            stage_buffer_base_);
+        break;
+    case 32:
+        direct_atomic_kernel<32><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device, capacity_mask_,
+            stage_buffer_base_);
+        break;
+    default:
+        running_ = false;
+        accepting_ = false;
+        return EINVAL;
+    }
     const int status = cuda_status(cudaGetLastError());
     if (status != 0) {
         running_ = false;
@@ -938,6 +1000,7 @@ int DirectAtomicQueue::try_poll(CopyCompletion *completion) noexcept {
         return EAGAIN;
     }
     *completion = slot->completion;
+    completed_device_batches_ += slot->batch_start;
     ++completion_head_;
     return 0;
 }
@@ -969,9 +1032,11 @@ int DirectAtomicQueue::reset() noexcept {
     capacity_ = 0;
     capacity_mask_ = 0;
     copy_warps_ = 0;
+    device_batch_ = 0;
     stage_buffer_base_ = 0;
     submit_tail_ = 0;
     completion_head_ = 0;
+    completed_device_batches_ = 0;
     accepting_ = false;
     return status;
 }
@@ -988,6 +1053,10 @@ std::uint32_t DirectAtomicQueue::copy_warps() const noexcept {
     return copy_warps_;
 }
 
+std::uint32_t DirectAtomicQueue::device_batch() const noexcept {
+    return device_batch_;
+}
+
 std::uint64_t DirectAtomicQueue::accepted_tasks() const noexcept {
     return submit_tail_;
 }
@@ -997,7 +1066,7 @@ std::uint64_t DirectAtomicQueue::completed_tasks() const noexcept {
 }
 
 std::uint64_t DirectAtomicQueue::host_system_atomic_operations() const noexcept {
-    return completion_head_ * 2;
+    return completed_device_batches_ * 2;
 }
 
 bool DirectAtomicQueue::running() const noexcept {

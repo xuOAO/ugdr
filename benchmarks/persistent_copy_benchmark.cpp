@@ -19,7 +19,8 @@ using ugdr::gpu::PersistentCopyResult;
 void print_result(const char *phase, const PersistentCopyResult &result) {
     std::printf("benchmark=persistent_copy schema_version=%u phase=%s build_type=%s model=%s "
                 "payload_bytes=%zu parent_wr_bytes=%zu outstanding_capacity=%zu host_batch=%zu "
-                "copy_warps=%u cta_count=%u ring_count=%u host_warp_aware=%u host_meta_bytes=%zu "
+                "device_batch=%u copy_warps=%u cta_count=%u ring_count=%u host_warp_aware=%u "
+                "host_meta_bytes=%zu "
                 "host_system_atomic_operations=%llu dynamic_shared_memory_bytes=%zu "
                 "registers_per_thread=%u occupancy=%.6f accepted_tasks=%llu completed_tasks=%llu "
                 "drained_tasks=%llu copied_bytes=%llu elapsed_seconds=%.9f task_MTask_per_s=%.6f "
@@ -28,7 +29,7 @@ void print_result(const char *phase, const PersistentCopyResult &result) {
                 result.schema_version, phase, UGDR_BENCHMARK_BUILD_TYPE,
                 ugdr::gpu::persistent_copy_model_name(result.model), result.payload_bytes,
                 result.parent_wr_bytes, result.outstanding_capacity, result.host_batch,
-                result.copy_warps, result.cta_count, result.ring_count,
+                result.device_batch, result.copy_warps, result.cta_count, result.ring_count,
                 result.host_warp_aware ? 1U : 0U, result.host_meta_bytes,
                 static_cast<unsigned long long>(result.host_system_atomic_operations),
                 result.dynamic_shared_memory_bytes, result.registers_per_thread, result.occupancy,
@@ -63,7 +64,8 @@ int run_direct_atomic(PersistentCopyConfig config) {
 
     ugdr::gpu::DirectAtomicQueue queue;
     status = ugdr::gpu::DirectAtomicQueue::allocate(
-        config.outstanding_capacity, config.copy_warps, payload.stage_buffer_base(), &queue);
+        config.outstanding_capacity, config.copy_warps, config.device_batch,
+        payload.stage_buffer_base(), &queue);
     if (status != 0 || queue.start() != 0) {
         return 5;
     }
@@ -122,6 +124,7 @@ int run_direct_atomic(PersistentCopyConfig config) {
     if (!run_tasks(config.warmup_tasks)) {
         return 6;
     }
+    const std::uint64_t warmup_atomic_operations = queue.host_system_atomic_operations();
     const auto begin = std::chrono::steady_clock::now();
     if (!run_tasks(config.iterations)) {
         return 6;
@@ -142,12 +145,14 @@ int run_direct_atomic(PersistentCopyConfig config) {
     result.parent_wr_bytes = config.parent_wr_bytes;
     result.outstanding_capacity = config.outstanding_capacity;
     result.host_batch = config.host_batch;
+    result.device_batch = config.device_batch;
     result.copy_warps = config.copy_warps;
     result.cta_count = 1;
     result.ring_count = 2;
     result.host_warp_aware = false;
     result.host_meta_bytes = queue.host_meta_bytes();
-    result.host_system_atomic_operations = config.iterations * 2;
+    result.host_system_atomic_operations =
+        queue.host_system_atomic_operations() - warmup_atomic_operations;
     result.accepted_tasks = config.iterations;
     result.completed_tasks = config.iterations;
     result.drained_tasks = config.iterations;
@@ -201,6 +206,7 @@ template <PersistentCopyModel Model> int run_shell(PersistentCopyConfig config) 
     result.parent_wr_bytes = config.parent_wr_bytes;
     result.outstanding_capacity = config.outstanding_capacity;
     result.host_batch = config.host_batch;
+    result.device_batch = config.device_batch;
     result.copy_warps = config.copy_warps;
     result.host_meta_bytes = control_memory.size();
     result.accepted_tasks = lifecycle.accepted_tasks();
@@ -231,8 +237,8 @@ int dispatch(PersistentCopyConfig config) {
 }  // namespace
 
 int main(int argc, char **argv) {
-    if (argc > 3) {
-        std::fprintf(stderr, "usage: %s [model] [copy_warps]\n", argv[0]);
+    if (argc > 4) {
+        std::fprintf(stderr, "usage: %s [model] [copy_warps] [device_batch]\n", argv[0]);
         return 1;
     }
     PersistentCopyConfig config;
@@ -240,7 +246,7 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "unknown persistent copy model: %s\n", argv[1]);
         return 1;
     }
-    if (argc == 3) {
+    if (argc >= 3) {
         if (ugdr::gpu::parse_persistent_copy_model(argv[1], &config.model) != 0) {
             std::fprintf(stderr, "unknown persistent copy model: %s\n", argv[1]);
             return 1;
@@ -252,6 +258,15 @@ int main(int argc, char **argv) {
             return 1;
         }
         config.copy_warps = static_cast<std::uint32_t>(copy_warps);
+    }
+    if (argc == 4) {
+        char *end = nullptr;
+        const unsigned long device_batch = std::strtoul(argv[3], &end, 10);
+        if (end == argv[3] || *end != '\0' || device_batch > UINT32_MAX) {
+            std::fprintf(stderr, "invalid device_batch: %s\n", argv[3]);
+            return 1;
+        }
+        config.device_batch = static_cast<std::uint32_t>(device_batch);
     }
     return dispatch(config);
 }

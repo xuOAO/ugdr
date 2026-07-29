@@ -59,6 +59,11 @@ bool common_contract_smoke() {
     }
     config.outstanding_capacity = 2;
     config.host_batch = 2;
+    config.device_batch = 4;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
+    config.device_batch = 2;
     config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
     config.copy_warps = 32;
     if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
@@ -75,6 +80,11 @@ bool common_contract_smoke() {
     }
     config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
     config.copy_warps = 4;
+    config.device_batch = 3;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
+    config.device_batch = 2;
 
     ugdr::gpu::PersistentCopyLifecycle lifecycle;
     if (lifecycle.start(config) != 0 ||
@@ -298,10 +308,10 @@ int copy_core_matrix_smoke() {
     return 0;
 }
 
-int direct_atomic_queue_smoke() {
+int direct_atomic_queue_smoke(std::uint32_t device_batch) {
     constexpr std::size_t payload_bytes = 8192;
     constexpr std::size_t guard_bytes = 16;
-    constexpr std::size_t capacity = 8;
+    constexpr std::size_t capacity = 32;
     constexpr std::uint64_t seed = UINT64_C(0xda7a70c0da7a70c0);
     constexpr std::size_t total_tasks = 257;
 
@@ -312,11 +322,17 @@ int direct_atomic_queue_smoke() {
         return 30;
     }
     ugdr::gpu::DirectAtomicQueue queue;
-    if (ugdr::gpu::DirectAtomicQueue::allocate(3, 4, payload.stage_buffer_base(), &queue) !=
+    if (ugdr::gpu::DirectAtomicQueue::allocate(3, 4, 4, payload.stage_buffer_base(), &queue) !=
             EINVAL ||
-        ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, payload.stage_buffer_base(), &queue) !=
-            0 ||
+        ugdr::gpu::DirectAtomicQueue::allocate(8, 4, 16, payload.stage_buffer_base(), &queue) !=
+            EINVAL ||
+        ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, 3, payload.stage_buffer_base(),
+                                               &queue) != EINVAL ||
+        ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, device_batch,
+                                               payload.stage_buffer_base(),
+                                               &queue) != 0 ||
         queue.capacity() != capacity || queue.copy_warps() != 4 ||
+        queue.device_batch() != device_batch ||
         queue.host_meta_bytes() != 64 + capacity * 64 || queue.start() != 0 ||
         !queue.running() || !queue.accepting()) {
         return 31;
@@ -387,7 +403,9 @@ int direct_atomic_queue_smoke() {
                           &overflow_task) != 0 ||
         !queue.drained() || queue.accepted_tasks() != total_tasks ||
         queue.completed_tasks() != total_tasks ||
-        queue.host_system_atomic_operations() != total_tasks * 2 ||
+        queue.host_system_atomic_operations() == 0 ||
+        queue.host_system_atomic_operations() > total_tasks * 2 ||
+        (queue.host_system_atomic_operations() & 1U) != 0 ||
         queue.request_stop() != 0 || queue.try_submit(overflow_task) != EINVAL ||
         queue.wait() != 0 || queue.running() || queue.wait() != EINVAL) {
         return 37;
@@ -440,5 +458,12 @@ int main() {
     if (copy_core_status != 0) {
         return copy_core_status;
     }
-    return direct_atomic_queue_smoke();
+    constexpr std::uint32_t device_batches[]{1, 2, 4, 8, 16, 32};
+    for (const std::uint32_t device_batch : device_batches) {
+        const int status = direct_atomic_queue_smoke(device_batch);
+        if (status != 0) {
+            return status;
+        }
+    }
+    return 0;
 }

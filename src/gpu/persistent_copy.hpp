@@ -6,7 +6,7 @@
 
 namespace ugdr::gpu {
 
-constexpr std::uint32_t kPersistentCopyResultSchemaVersion = 1;
+constexpr std::uint32_t kPersistentCopyResultSchemaVersion = 2;
 constexpr std::size_t kPersistentCopyMaxPayloadBytes = 8192;
 constexpr std::uint64_t kPersistentCopyMaxStageBufferBytes = UINT64_C(1) << 32;
 
@@ -63,6 +63,7 @@ struct PersistentCopyConfig {
     PersistentCopyModel model = PersistentCopyModel::direct_atomic;
     std::uint32_t device_ordinal = 0;
     std::uint32_t copy_warps = 4;
+    std::uint32_t device_batch = 4;
     std::uint32_t shared_stage_count = 0;
     std::size_t payload_bytes = kPersistentCopyMaxPayloadBytes;
     std::size_t parent_wr_bytes = 64 * 1024;
@@ -84,6 +85,7 @@ struct PersistentCopyResult {
     std::size_t parent_wr_bytes = 0;
     std::size_t outstanding_capacity = 0;
     std::size_t host_batch = 0;
+    std::uint32_t device_batch = 0;
     std::uint32_t copy_warps = 0;
     std::uint32_t cta_count = 0;
     std::uint32_t ring_count = 0;
@@ -183,7 +185,8 @@ class DirectAtomicQueue {
     DirectAtomicQueue &operator=(const DirectAtomicQueue &) = delete;
 
     static int allocate(std::size_t capacity, std::uint32_t copy_warps,
-                        std::uint64_t stage_buffer_base, DirectAtomicQueue *queue) noexcept;
+                        std::uint32_t device_batch, std::uint64_t stage_buffer_base,
+                        DirectAtomicQueue *queue) noexcept;
     int start() noexcept;
     int try_submit(const CopyTask &task) noexcept;
     int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
@@ -196,6 +199,7 @@ class DirectAtomicQueue {
     [[nodiscard]] std::size_t capacity() const noexcept;
     [[nodiscard]] std::size_t host_meta_bytes() const noexcept;
     [[nodiscard]] std::uint32_t copy_warps() const noexcept;
+    [[nodiscard]] std::uint32_t device_batch() const noexcept;
     [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
     [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
     [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
@@ -209,9 +213,11 @@ class DirectAtomicQueue {
     std::size_t capacity_ = 0;
     std::size_t capacity_mask_ = 0;
     std::uint32_t copy_warps_ = 0;
+    std::uint32_t device_batch_ = 0;
     std::uint64_t stage_buffer_base_ = 0;
     std::uint64_t submit_tail_ = 0;
     std::uint64_t completion_head_ = 0;
+    std::uint64_t completed_device_batches_ = 0;
     bool running_ = false;
     bool accepting_ = false;
 };
