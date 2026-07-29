@@ -443,7 +443,9 @@ int run_static_partition_spsc(PersistentCopyConfig config) {
 }
 
 int run_warp_specialized(PersistentCopyConfig config) {
-    config.model = PersistentCopyModel::warp_specialized;
+    const bool use_pipeline =
+        config.model ==
+        PersistentCopyModel::warp_specialized_pipeline;
     if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
         return 2;
     }
@@ -466,11 +468,23 @@ int run_warp_specialized(PersistentCopyConfig config) {
     }
 
     ugdr::gpu::WarpSpecializedQueue queue;
-    status = ugdr::gpu::WarpSpecializedQueue::allocate(
-        config.outstanding_capacity, config.copy_warps,
-        config.device_batch, config.shared_queue_depth,
-        payload.stage_buffer_base(), &queue);
-    if (status != 0 || queue.start() != 0) {
+    status =
+        use_pipeline
+            ? ugdr::gpu::WarpSpecializedQueue::
+                  allocate_pipeline(
+                      config.outstanding_capacity,
+                      config.copy_warps,
+                      config.device_batch,
+                      config.shared_queue_depth,
+                      payload.stage_buffer_base(), &queue)
+            : ugdr::gpu::WarpSpecializedQueue::allocate(
+                  config.outstanding_capacity,
+                  config.copy_warps, config.device_batch,
+                  config.shared_queue_depth,
+                  payload.stage_buffer_base(), &queue);
+    if (status != 0 ||
+        (use_pipeline ? queue.start_pipeline()
+                      : queue.start()) != 0) {
         return 5;
     }
 
@@ -558,7 +572,7 @@ int run_warp_specialized(PersistentCopyConfig config) {
     const double elapsed =
         std::chrono::duration<double>(end - begin).count();
     PersistentCopyResult result;
-    result.model = PersistentCopyModel::warp_specialized;
+    result.model = config.model;
     result.payload_bytes = config.payload_bytes;
     result.parent_wr_bytes = config.parent_wr_bytes;
     result.outstanding_capacity =
@@ -589,7 +603,10 @@ int run_warp_specialized(PersistentCopyConfig config) {
     result.correctness_passed =
         check.payload_matches && check.guards_intact;
     result.measurement_valid = result.correctness_passed;
-    print_result("warp_specialized", result);
+    print_result(
+        use_pipeline ? "warp_specialized_pipeline"
+                     : "warp_specialized",
+        result);
     return result.measurement_valid ? 0 : 9;
 }
 
@@ -603,6 +620,9 @@ int dispatch(PersistentCopyConfig config) {
         return run_static_partition_spsc(config);
     case PersistentCopyModel::warp_specialized:
         config.shared_queue_depth = 32;
+        return run_warp_specialized(config);
+    case PersistentCopyModel::warp_specialized_pipeline:
+        config.shared_queue_depth = 16;
         return run_warp_specialized(config);
     }
     return 2;

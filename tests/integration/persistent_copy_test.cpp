@@ -19,6 +19,7 @@ bool common_contract_smoke() {
         ugdr::gpu::PersistentCopyModel::dynamic_sharded_spsc,
         ugdr::gpu::PersistentCopyModel::static_partition_spsc,
         ugdr::gpu::PersistentCopyModel::warp_specialized,
+        ugdr::gpu::PersistentCopyModel::warp_specialized_pipeline,
     };
     for (const auto expected : models) {
         ugdr::gpu::PersistentCopyModel parsed{};
@@ -840,7 +841,8 @@ int static_partition_head_of_line_smoke() {
 
 int warp_specialized_queue_smoke(
     std::uint32_t copy_warps, std::uint32_t device_batch,
-    std::uint32_t shared_queue_depth) {
+    std::uint32_t shared_queue_depth,
+    bool use_pipeline) {
     constexpr std::size_t payload_bytes = 8192;
     constexpr std::size_t capacity = 32;
     constexpr std::uint64_t seed =
@@ -875,19 +877,28 @@ int warp_specialized_queue_smoke(
         ugdr::gpu::WarpSpecializedQueue::allocate(
             capacity, 4, 8, 4,
             payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(
-            capacity, copy_warps, device_batch,
-            shared_queue_depth, payload.stage_buffer_base(),
-            &queue) != 0 ||
+        (use_pipeline
+             ? ugdr::gpu::WarpSpecializedQueue::
+                   allocate_pipeline(
+                       capacity, copy_warps, device_batch,
+                       shared_queue_depth,
+                       payload.stage_buffer_base(), &queue)
+             : ugdr::gpu::WarpSpecializedQueue::allocate(
+                   capacity, copy_warps, device_batch,
+                   shared_queue_depth,
+                   payload.stage_buffer_base(), &queue)) != 0 ||
         queue.capacity() != capacity ||
         queue.copy_warps() != copy_warps ||
         queue.device_batch() != device_batch ||
         queue.shared_queue_depth() != shared_queue_depth ||
         queue.host_meta_bytes() != 64 + capacity * 48 ||
         queue.dynamic_shared_memory_bytes() !=
-            64 + shared_queue_depth * 80 ||
+            64 + shared_queue_depth * 80 *
+                     (use_pipeline ? copy_warps : 1) ||
         queue.host_system_atomic_operations() != 0 ||
-        queue.start() != 0 || !queue.running() ||
+        (use_pipeline ? queue.start_pipeline()
+                      : queue.start()) != 0 ||
+        !queue.running() ||
         !queue.accepting()) {
         return 79;
     }
@@ -977,7 +988,8 @@ int warp_specialized_queue_smoke(
         return 85;
     }
 
-    if (queue.start() != 0) {
+    if ((use_pipeline ? queue.start_pipeline()
+                      : queue.start()) != 0) {
         return 86;
     }
     for (std::size_t index = 0; index < capacity; ++index) {
@@ -1088,9 +1100,19 @@ int main() {
     for (const auto &test_case : warp_specialized_cases) {
         const int status = warp_specialized_queue_smoke(
             test_case.copy_warps, test_case.device_batch,
-            test_case.shared_queue_depth);
+            test_case.shared_queue_depth, false);
         if (status != 0) {
             return status;
+        }
+        if (test_case.shared_queue_depth <= 16) {
+            const int pipeline_status =
+                warp_specialized_queue_smoke(
+                    test_case.copy_warps,
+                    test_case.device_batch,
+                    test_case.shared_queue_depth, true);
+            if (pipeline_status != 0) {
+                return pipeline_status;
+            }
         }
     }
     return 0;

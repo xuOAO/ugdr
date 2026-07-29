@@ -15,6 +15,7 @@ enum class PersistentCopyModel : std::uint32_t {
     dynamic_sharded_spsc = 1,
     static_partition_spsc = 2,
     warp_specialized = 3,
+    warp_specialized_pipeline = 4,
 };
 
 const char *persistent_copy_model_name(PersistentCopyModel model) noexcept;
@@ -336,7 +337,14 @@ class WarpSpecializedQueue {
                         std::uint32_t shared_queue_depth,
                         std::uint64_t stage_buffer_base,
                         WarpSpecializedQueue *queue) noexcept;
+    static int allocate_pipeline(
+        std::size_t capacity, std::uint32_t copy_warps,
+        std::uint32_t device_batch,
+        std::uint32_t shared_queue_depth,
+        std::uint64_t stage_buffer_base,
+        WarpSpecializedQueue *queue) noexcept;
     int start() noexcept;
+    int start_pipeline() noexcept;
     int try_submit(const CopyTask &task) noexcept;
     int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
                          std::size_t *submitted_count) noexcept;
@@ -360,6 +368,8 @@ class WarpSpecializedQueue {
     [[nodiscard]] bool empty() const noexcept;
 
   private:
+    int start_impl(bool use_pipeline) noexcept;
+
     MappedPinnedMemory memory_;
     std::size_t capacity_ = 0;
     std::size_t capacity_mask_ = 0;
