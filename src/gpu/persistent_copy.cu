@@ -519,6 +519,7 @@ __global__ void static_partition_spsc_kernel(
     std::uint64_t capacity_mask, std::uint32_t copy_warps,
     std::uint32_t copy_warp_shift, std::uint64_t stage_buffer_base) {
     static_assert(TasksPerBatch > 0);
+    static_assert(TasksPerBatch <= 32);
     constexpr unsigned kFullWarp = 0xffffffffU;
     const std::uint32_t lane = threadIdx.x & 31U;
     const std::uint32_t warp = threadIdx.x >> 5U;
@@ -554,24 +555,25 @@ __global__ void static_partition_spsc_kernel(
             continue;
         }
 
+        const std::uint64_t lane_task_index =
+            owned_index + static_cast<std::uint64_t>(lane) * copy_warps;
+        CopyTask lane_task{};
+        if (lane < task_count) {
+            lane_task =
+                task_slots[lane_task_index & capacity_mask].task;
+        }
+        __syncwarp();
+
 #pragma unroll 1
         for (std::uint32_t batch_index = 0; batch_index < task_count;
              ++batch_index) {
-            const std::uint64_t task_index =
-                owned_index +
-                static_cast<std::uint64_t>(batch_index) * copy_warps;
-            StaticPartitionSpscTaskSlot *const task_slot =
-                &task_slots[task_index & capacity_mask];
             CopyTask task{};
-            if (lane == 0) {
-                task = task_slot->task;
-            }
-            task.target_address =
-                __shfl_sync(kFullWarp, task.target_address, 0);
-            task.length = __shfl_sync(kFullWarp, task.length, 0);
-            task.relative_offset =
-                __shfl_sync(kFullWarp, task.relative_offset, 0);
-
+            task.target_address = __shfl_sync(
+                kFullWarp, lane_task.target_address, batch_index);
+            task.length = __shfl_sync(
+                kFullWarp, lane_task.length, batch_index);
+            task.relative_offset = __shfl_sync(
+                kFullWarp, lane_task.relative_offset, batch_index);
             const auto *const source =
                 reinterpret_cast<const std::uint8_t *>(
                     static_cast<std::uintptr_t>(
@@ -580,16 +582,16 @@ __global__ void static_partition_spsc_kernel(
                 static_cast<std::uintptr_t>(task.target_address));
             copy_cg_warp(source, target, task.length);
             __syncwarp();
+        }
 
-            if (lane == 0) {
-                StaticPartitionSpscCompletionSlot *const completion_slot =
-                    &completion_slots[task_index & capacity_mask];
-                completion_slot->completion.task_id = task.task_id;
-                completion_slot->completion.result =
-                    CopyTaskResult::success;
-                system_store_release(&completion_slot->sequence,
-                                     task_index + 1);
-            }
+        if (lane < task_count) {
+            StaticPartitionSpscCompletionSlot *const completion_slot =
+                &completion_slots[lane_task_index & capacity_mask];
+            completion_slot->completion.task_id = lane_task.task_id;
+            completion_slot->completion.result =
+                CopyTaskResult::success;
+            system_store_release(&completion_slot->sequence,
+                                 lane_task_index + 1);
         }
         owned_index +=
             static_cast<std::uint64_t>(task_count) * copy_warps;
