@@ -128,6 +128,7 @@ __device__ __forceinline__ void copy_cg_narrow_bulk_warp(const std::uint8_t *sou
                                                          std::uint8_t *target,
                                                          std::uint32_t unit_count,
                                                          std::uint32_t lane) noexcept {
+#pragma unroll 2
     for (std::uint32_t unit = lane; unit < unit_count; unit += 32) {
         const std::uint32_t offset = unit * Width;
         copy_cg_narrow(source + offset, target + offset, Width);
@@ -169,6 +170,7 @@ __device__ __forceinline__ void copy_cg_warp_generic(const std::uint8_t *source,
     const std::uint32_t unit_count = remaining / width;
     switch (width) {
     case 16:
+#pragma unroll 2
         for (std::uint32_t unit = lane; unit < unit_count; unit += 32) {
             const std::uint32_t offset = unit * 16;
             copy_cg_16(source + offset, target + offset);
