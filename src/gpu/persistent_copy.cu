@@ -134,9 +134,21 @@ __device__ __forceinline__ void copy_cg_narrow_bulk_warp(const std::uint8_t *sou
     }
 }
 
-__device__ __forceinline__ void copy_cg_warp(const std::uint8_t *source,
-                                             std::uint8_t *target,
-                                             std::uint32_t length) noexcept {
+__device__ __forceinline__ void copy_cg_16_warp_aligned(const std::uint8_t *source,
+                                                        std::uint8_t *target,
+                                                        std::uint32_t length) noexcept {
+    const std::uint32_t lane = threadIdx.x & 31U;
+    const std::uint32_t unit_count = length / 16;
+#pragma unroll 2
+    for (std::uint32_t unit = lane; unit < unit_count; unit += 32) {
+        const std::uint32_t offset = unit * 16;
+        copy_cg_16(source + offset, target + offset);
+    }
+}
+
+__device__ __forceinline__ void copy_cg_warp_generic(const std::uint8_t *source,
+                                                      std::uint8_t *target,
+                                                      std::uint32_t length) noexcept {
     const std::uint32_t lane = threadIdx.x & 31U;
     const std::uint32_t width = common_bulk_width(source, target);
     const std::uintptr_t source_address = reinterpret_cast<std::uintptr_t>(source);
@@ -181,6 +193,18 @@ __device__ __forceinline__ void copy_cg_warp(const std::uint8_t *source,
     if (lane == 0 && tail != 0) {
         copy_cg_narrow_serial(source + body_bytes, target + body_bytes, tail);
     }
+}
+
+__device__ __forceinline__ void copy_cg_warp(const std::uint8_t *source,
+                                             std::uint8_t *target,
+                                             std::uint32_t length) noexcept {
+    const std::uintptr_t combined = reinterpret_cast<std::uintptr_t>(source) |
+                                    reinterpret_cast<std::uintptr_t>(target) | length;
+    if ((combined & 15U) == 0) {
+        copy_cg_16_warp_aligned(source, target, length);
+        return;
+    }
+    copy_cg_warp_generic(source, target, length);
 }
 
 __device__ __forceinline__ void copy_cg_warp_counted(const std::uint8_t *source,
