@@ -274,6 +274,55 @@ class DynamicShardedSpscQueue {
     bool accepting_ = false;
 };
 
+class StaticPartitionSpscQueue {
+  public:
+    StaticPartitionSpscQueue() noexcept = default;
+    ~StaticPartitionSpscQueue();
+
+    StaticPartitionSpscQueue(const StaticPartitionSpscQueue &) = delete;
+    StaticPartitionSpscQueue &operator=(const StaticPartitionSpscQueue &) = delete;
+
+    static int allocate(std::size_t capacity, std::uint32_t copy_warps,
+                        std::uint32_t device_batch,
+                        std::uint64_t stage_buffer_base,
+                        StaticPartitionSpscQueue *queue) noexcept;
+    int start() noexcept;
+    int try_submit(const CopyTask &task) noexcept;
+    int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
+                         std::size_t *submitted_count) noexcept;
+    int try_poll(CopyCompletion *completion) noexcept;
+    int request_stop() noexcept;
+    int wait() noexcept;
+    int reset() noexcept;
+
+    [[nodiscard]] std::size_t capacity() const noexcept;
+    [[nodiscard]] std::size_t partition_capacity() const noexcept;
+    [[nodiscard]] std::size_t host_meta_bytes() const noexcept;
+    [[nodiscard]] std::uint32_t copy_warps() const noexcept;
+    [[nodiscard]] std::uint32_t device_batch() const noexcept;
+    [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
+    [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
+    [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
+    [[nodiscard]] bool head_of_line_blocked() const noexcept;
+    [[nodiscard]] bool running() const noexcept;
+    [[nodiscard]] bool accepting() const noexcept;
+    [[nodiscard]] bool drained() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
+
+  private:
+    MappedPinnedMemory memory_;
+    std::size_t capacity_ = 0;
+    std::size_t capacity_mask_ = 0;
+    std::size_t partition_capacity_ = 0;
+    std::uint32_t copy_warps_ = 0;
+    std::uint32_t device_batch_ = 0;
+    std::uint64_t stage_buffer_base_ = 0;
+    std::uint64_t submit_tail_ = 0;
+    std::uint64_t completion_head_ = 0;
+    bool running_ = false;
+    bool accepting_ = false;
+};
+
 enum class PersistentCopyLifecycleState : std::uint32_t {
     stopped = 0,
     accepting = 1,

@@ -274,12 +274,29 @@ struct alignas(16) DynamicShardedSpscCompletionSlot {
     CopyCompletion completion;
 };
 
+struct alignas(64) StaticPartitionSpscControl {
+    std::uint64_t task_tail;
+    std::uint64_t stop_requested;
+};
+
+struct alignas(32) StaticPartitionSpscTaskSlot {
+    CopyTask task;
+};
+
+struct alignas(32) StaticPartitionSpscCompletionSlot {
+    CopyCompletion completion;
+    std::uint64_t sequence;
+};
+
 static_assert(sizeof(DirectAtomicControl) == 64);
 static_assert(sizeof(DirectAtomicTaskSlot) == 32);
 static_assert(sizeof(DirectAtomicCompletionSlot) == 32);
 static_assert(sizeof(DynamicShardedSpscControl) == 64);
 static_assert(sizeof(DynamicShardedSpscTaskSlot) == 32);
 static_assert(sizeof(DynamicShardedSpscCompletionSlot) == 16);
+static_assert(sizeof(StaticPartitionSpscControl) == 64);
+static_assert(sizeof(StaticPartitionSpscTaskSlot) == 32);
+static_assert(sizeof(StaticPartitionSpscCompletionSlot) == 32);
 
 __device__ __forceinline__ std::uint64_t system_load_acquire(
     const std::uint64_t *address) noexcept {
@@ -494,6 +511,91 @@ __global__ void dynamic_sharded_spsc_kernel(
     }
 }
 
+template <std::uint32_t TasksPerBatch>
+__global__ void static_partition_spsc_kernel(
+    StaticPartitionSpscControl *control,
+    StaticPartitionSpscTaskSlot *task_slots,
+    StaticPartitionSpscCompletionSlot *completion_slots,
+    std::uint64_t capacity_mask, std::uint32_t copy_warps,
+    std::uint32_t copy_warp_shift, std::uint64_t stage_buffer_base) {
+    static_assert(TasksPerBatch > 0);
+    constexpr unsigned kFullWarp = 0xffffffffU;
+    const std::uint32_t lane = threadIdx.x & 31U;
+    const std::uint32_t warp = threadIdx.x >> 5U;
+    std::uint64_t owned_index = warp;
+
+    while (true) {
+        std::uint32_t task_count = 0;
+        bool should_stop = false;
+        if (lane == 0) {
+            std::uint64_t task_tail =
+                system_load_acquire(&control->task_tail);
+            if (owned_index >= task_tail &&
+                system_load_acquire(&control->stop_requested) != 0) {
+                task_tail = system_load_acquire(&control->task_tail);
+                should_stop = owned_index >= task_tail;
+            }
+            if (!should_stop && owned_index < task_tail) {
+                const std::uint64_t available =
+                    ((task_tail - 1 - owned_index) >> copy_warp_shift) + 1;
+                task_count = static_cast<std::uint32_t>(
+                    available < TasksPerBatch ? available : TasksPerBatch);
+            }
+        }
+        task_count = __shfl_sync(kFullWarp, task_count, 0);
+        should_stop = __shfl_sync(kFullWarp, should_stop, 0);
+        if (should_stop) {
+            return;
+        }
+        if (task_count == 0) {
+            if (lane == 0) {
+                __nanosleep(64);
+            }
+            continue;
+        }
+
+#pragma unroll 1
+        for (std::uint32_t batch_index = 0; batch_index < task_count;
+             ++batch_index) {
+            const std::uint64_t task_index =
+                owned_index +
+                static_cast<std::uint64_t>(batch_index) * copy_warps;
+            StaticPartitionSpscTaskSlot *const task_slot =
+                &task_slots[task_index & capacity_mask];
+            CopyTask task{};
+            if (lane == 0) {
+                task = task_slot->task;
+            }
+            task.target_address =
+                __shfl_sync(kFullWarp, task.target_address, 0);
+            task.length = __shfl_sync(kFullWarp, task.length, 0);
+            task.relative_offset =
+                __shfl_sync(kFullWarp, task.relative_offset, 0);
+
+            const auto *const source =
+                reinterpret_cast<const std::uint8_t *>(
+                    static_cast<std::uintptr_t>(
+                        stage_buffer_base + task.relative_offset));
+            auto *const target = reinterpret_cast<std::uint8_t *>(
+                static_cast<std::uintptr_t>(task.target_address));
+            copy_cg_warp(source, target, task.length);
+            __syncwarp();
+
+            if (lane == 0) {
+                StaticPartitionSpscCompletionSlot *const completion_slot =
+                    &completion_slots[task_index & capacity_mask];
+                completion_slot->completion.task_id = task.task_id;
+                completion_slot->completion.result =
+                    CopyTaskResult::success;
+                system_store_release(&completion_slot->sequence,
+                                     task_index + 1);
+            }
+        }
+        owned_index +=
+            static_cast<std::uint64_t>(task_count) * copy_warps;
+    }
+}
+
 int cuda_status(cudaError_t status) noexcept {
     switch (status) {
     case cudaSuccess:
@@ -591,6 +693,29 @@ bool dynamic_sharded_spsc_allocation_size(std::size_t capacity,
     return true;
 }
 
+bool static_partition_spsc_allocation_size(std::size_t capacity,
+                                           std::uint32_t copy_warps,
+                                           std::size_t *bytes) noexcept {
+    constexpr std::size_t kPerSlotBytes =
+        sizeof(StaticPartitionSpscTaskSlot) +
+        sizeof(StaticPartitionSpscCompletionSlot);
+    if (copy_warps == 0 || copy_warps > 32 ||
+        !is_power_of_two(copy_warps) || !is_power_of_two(capacity) ||
+        capacity < copy_warps ||
+        (capacity & (static_cast<std::size_t>(copy_warps) - 1)) != 0) {
+        return false;
+    }
+    if (capacity >
+        (std::numeric_limits<std::size_t>::max() -
+         sizeof(StaticPartitionSpscControl)) /
+            kPerSlotBytes) {
+        return false;
+    }
+    *bytes = sizeof(StaticPartitionSpscControl) +
+             capacity * kPerSlotBytes;
+    return true;
+}
+
 DirectAtomicControl *direct_atomic_control(void *memory) noexcept {
     return static_cast<DirectAtomicControl *>(memory);
 }
@@ -619,6 +744,34 @@ DynamicShardedSpscCompletionSlot *dynamic_sharded_spsc_completion_slots(
     void *memory, std::uint32_t lane_count, std::size_t capacity) noexcept {
     return reinterpret_cast<DynamicShardedSpscCompletionSlot *>(
         dynamic_sharded_spsc_task_slots(memory, lane_count) + capacity);
+}
+
+StaticPartitionSpscControl *static_partition_spsc_control(
+    void *memory) noexcept {
+    return static_cast<StaticPartitionSpscControl *>(memory);
+}
+
+StaticPartitionSpscTaskSlot *static_partition_spsc_task_slots(
+    void *memory) noexcept {
+    return reinterpret_cast<StaticPartitionSpscTaskSlot *>(
+        static_partition_spsc_control(memory) + 1);
+}
+
+StaticPartitionSpscCompletionSlot *static_partition_spsc_completion_slots(
+    void *memory, std::size_t capacity) noexcept {
+    return reinterpret_cast<StaticPartitionSpscCompletionSlot *>(
+        static_partition_spsc_task_slots(memory) + capacity);
+}
+
+const StaticPartitionSpscCompletionSlot *
+static_partition_spsc_completion_slots(const void *memory,
+                                       std::size_t capacity) noexcept {
+    const auto *const control =
+        static_cast<const StaticPartitionSpscControl *>(memory);
+    const auto *const task_slots =
+        reinterpret_cast<const StaticPartitionSpscTaskSlot *>(control + 1);
+    return reinterpret_cast<const StaticPartitionSpscCompletionSlot *>(
+        task_slots + capacity);
 }
 
 std::uint64_t host_load_acquire(const std::uint64_t *address) noexcept {
@@ -686,6 +839,13 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
     if (config.model == PersistentCopyModel::dynamic_sharded_spsc) {
         std::size_t bytes = 0;
         if (!dynamic_sharded_spsc_allocation_size(
+                config.outstanding_capacity, config.copy_warps, &bytes)) {
+            return EINVAL;
+        }
+    }
+    if (config.model == PersistentCopyModel::static_partition_spsc) {
+        std::size_t bytes = 0;
+        if (!static_partition_spsc_allocation_size(
                 config.outstanding_capacity, config.copy_warps, &bytes)) {
             return EINVAL;
         }
@@ -1539,6 +1699,278 @@ bool DynamicShardedSpscQueue::drained() const noexcept {
 }
 
 bool DynamicShardedSpscQueue::empty() const noexcept {
+    return memory_.empty();
+}
+
+StaticPartitionSpscQueue::~StaticPartitionSpscQueue() {
+    if (running_) {
+        (void)request_stop();
+        (void)wait();
+    }
+    (void)reset();
+}
+
+int StaticPartitionSpscQueue::allocate(
+    std::size_t capacity, std::uint32_t copy_warps,
+    std::uint32_t device_batch, std::uint64_t stage_buffer_base,
+    StaticPartitionSpscQueue *queue) noexcept {
+    std::size_t bytes = 0;
+    if (queue == nullptr || !queue->empty() ||
+        !is_supported_device_batch(device_batch) ||
+        device_batch > capacity || stage_buffer_base == 0 ||
+        !static_partition_spsc_allocation_size(capacity, copy_warps,
+                                               &bytes)) {
+        return EINVAL;
+    }
+    const int status = MappedPinnedMemory::allocate(bytes, &queue->memory_);
+    if (status != 0) {
+        return status;
+    }
+    queue->capacity_ = capacity;
+    queue->capacity_mask_ = capacity - 1;
+    queue->partition_capacity_ = capacity / copy_warps;
+    queue->copy_warps_ = copy_warps;
+    queue->device_batch_ = device_batch;
+    queue->stage_buffer_base_ = stage_buffer_base;
+    return 0;
+}
+
+int StaticPartitionSpscQueue::start() noexcept {
+    if (empty() || running_) {
+        return EINVAL;
+    }
+    std::memset(memory_.host_data(), 0, memory_.size());
+    submit_tail_ = 0;
+    completion_head_ = 0;
+    accepting_ = true;
+    running_ = true;
+
+    const std::uintptr_t device_base =
+        static_cast<std::uintptr_t>(memory_.device_address());
+    auto *const control_device =
+        reinterpret_cast<StaticPartitionSpscControl *>(device_base);
+    auto *const task_slots_device =
+        reinterpret_cast<StaticPartitionSpscTaskSlot *>(
+            device_base + sizeof(StaticPartitionSpscControl));
+    auto *const completion_slots_device =
+        reinterpret_cast<StaticPartitionSpscCompletionSlot *>(
+            device_base + sizeof(StaticPartitionSpscControl) +
+            capacity_ * sizeof(StaticPartitionSpscTaskSlot));
+    std::uint32_t copy_warp_shift = 0;
+    for (std::uint32_t warps = copy_warps_; warps > 1; warps >>= 1) {
+        ++copy_warp_shift;
+    }
+    switch (device_batch_) {
+    case 1:
+        static_partition_spsc_kernel<1><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device,
+            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
+        break;
+    case 2:
+        static_partition_spsc_kernel<2><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device,
+            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
+        break;
+    case 4:
+        static_partition_spsc_kernel<4><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device,
+            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
+        break;
+    case 8:
+        static_partition_spsc_kernel<8><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device,
+            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
+        break;
+    case 16:
+        static_partition_spsc_kernel<16><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device,
+            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
+        break;
+    case 32:
+        static_partition_spsc_kernel<32><<<1, copy_warps_ * 32>>>(
+            control_device, task_slots_device, completion_slots_device,
+            capacity_mask_, copy_warps_, copy_warp_shift, stage_buffer_base_);
+        break;
+    default:
+        running_ = false;
+        accepting_ = false;
+        return EINVAL;
+    }
+    const int status = cuda_status(cudaGetLastError());
+    if (status != 0) {
+        running_ = false;
+        accepting_ = false;
+    }
+    return status;
+}
+
+int StaticPartitionSpscQueue::try_submit(const CopyTask &task) noexcept {
+    std::size_t submitted_count = 0;
+    return try_submit_batch(&task, 1, &submitted_count);
+}
+
+int StaticPartitionSpscQueue::try_submit_batch(
+    const CopyTask *tasks, std::size_t task_count,
+    std::size_t *submitted_count) noexcept {
+    if (submitted_count != nullptr) {
+        *submitted_count = 0;
+    }
+    if (!running_ || !accepting_ || tasks == nullptr || task_count == 0 ||
+        submitted_count == nullptr) {
+        return EINVAL;
+    }
+    const std::size_t outstanding =
+        static_cast<std::size_t>(submit_tail_ - completion_head_);
+    if (outstanding >= capacity_) {
+        return EAGAIN;
+    }
+    const std::size_t available = capacity_ - outstanding;
+    const std::size_t count =
+        task_count < available ? task_count : available;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (tasks[index].target_address == 0 || tasks[index].length == 0) {
+            return EINVAL;
+        }
+    }
+
+    auto *const control =
+        static_partition_spsc_control(memory_.host_data());
+    auto *const slots =
+        static_partition_spsc_task_slots(memory_.host_data());
+    for (std::size_t index = 0; index < count; ++index) {
+        const std::uint64_t task_index = submit_tail_ + index;
+        StaticPartitionSpscTaskSlot *const slot =
+            &slots[task_index & capacity_mask_];
+        slot->task = tasks[index];
+    }
+    submit_tail_ += count;
+    host_store_release(&control->task_tail, submit_tail_);
+    *submitted_count = count;
+    return 0;
+}
+
+int StaticPartitionSpscQueue::try_poll(
+    CopyCompletion *completion) noexcept {
+    if (completion == nullptr || empty()) {
+        return EINVAL;
+    }
+    auto *const slots = static_partition_spsc_completion_slots(
+        memory_.host_data(), capacity_);
+    StaticPartitionSpscCompletionSlot *const slot =
+        &slots[completion_head_ & capacity_mask_];
+    if (host_load_acquire(&slot->sequence) != completion_head_ + 1) {
+        return EAGAIN;
+    }
+    *completion = slot->completion;
+    ++completion_head_;
+    return 0;
+}
+
+int StaticPartitionSpscQueue::request_stop() noexcept {
+    if (!running_ || !accepting_) {
+        return EINVAL;
+    }
+    accepting_ = false;
+    auto *const control =
+        static_partition_spsc_control(memory_.host_data());
+    host_store_release(&control->stop_requested, 1);
+    return 0;
+}
+
+int StaticPartitionSpscQueue::wait() noexcept {
+    if (!running_ || accepting_) {
+        return EINVAL;
+    }
+    const int status = cuda_status(cudaDeviceSynchronize());
+    running_ = false;
+    return status;
+}
+
+int StaticPartitionSpscQueue::reset() noexcept {
+    if (running_) {
+        return EBUSY;
+    }
+    const int status = memory_.reset();
+    capacity_ = 0;
+    capacity_mask_ = 0;
+    partition_capacity_ = 0;
+    copy_warps_ = 0;
+    device_batch_ = 0;
+    stage_buffer_base_ = 0;
+    submit_tail_ = 0;
+    completion_head_ = 0;
+    accepting_ = false;
+    return status;
+}
+
+std::size_t StaticPartitionSpscQueue::capacity() const noexcept {
+    return capacity_;
+}
+
+std::size_t StaticPartitionSpscQueue::partition_capacity() const noexcept {
+    return partition_capacity_;
+}
+
+std::size_t StaticPartitionSpscQueue::host_meta_bytes() const noexcept {
+    return memory_.size();
+}
+
+std::uint32_t StaticPartitionSpscQueue::copy_warps() const noexcept {
+    return copy_warps_;
+}
+
+std::uint32_t StaticPartitionSpscQueue::device_batch() const noexcept {
+    return device_batch_;
+}
+
+std::uint64_t StaticPartitionSpscQueue::accepted_tasks() const noexcept {
+    return submit_tail_;
+}
+
+std::uint64_t StaticPartitionSpscQueue::completed_tasks() const noexcept {
+    return completion_head_;
+}
+
+std::uint64_t
+StaticPartitionSpscQueue::host_system_atomic_operations() const noexcept {
+    return 0;
+}
+
+bool StaticPartitionSpscQueue::head_of_line_blocked() const noexcept {
+    if (empty() || completion_head_ >= submit_tail_) {
+        return false;
+    }
+    const auto *const slots = static_partition_spsc_completion_slots(
+        memory_.host_data(), capacity_);
+    const auto *const head_slot =
+        &slots[completion_head_ & capacity_mask_];
+    if (host_load_acquire(&head_slot->sequence) ==
+        completion_head_ + 1) {
+        return false;
+    }
+    for (std::uint64_t index = completion_head_ + 1;
+         index < submit_tail_; ++index) {
+        const auto *const slot = &slots[index & capacity_mask_];
+        if (host_load_acquire(&slot->sequence) == index + 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool StaticPartitionSpscQueue::running() const noexcept {
+    return running_;
+}
+
+bool StaticPartitionSpscQueue::accepting() const noexcept {
+    return accepting_;
+}
+
+bool StaticPartitionSpscQueue::drained() const noexcept {
+    return submit_tail_ == completion_head_;
+}
+
+bool StaticPartitionSpscQueue::empty() const noexcept {
     return memory_.empty();
 }
 

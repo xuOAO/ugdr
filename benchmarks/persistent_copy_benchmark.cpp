@@ -305,6 +305,143 @@ int run_dynamic_sharded_spsc(PersistentCopyConfig config) {
     return result.measurement_valid ? 0 : 9;
 }
 
+int run_static_partition_spsc(PersistentCopyConfig config) {
+    config.model = PersistentCopyModel::static_partition_spsc;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
+        return 2;
+    }
+    const int device_status =
+        ugdr::gpu::initialize_persistent_copy_device(config.device_ordinal);
+    if (device_status != 0) {
+        return device_status == ENODEV ? 77 : 3;
+    }
+
+    PersistentCopyPayloadBuffer payload;
+    int status = PersistentCopyPayloadBuffer::allocate(
+        config.payload_bytes, 16, &payload);
+    constexpr std::uint64_t seed = UINT64_C(0x4650362d533032);
+    if (status == 0) {
+        status = payload.prepare(seed);
+    }
+    if (status != 0) {
+        return status == ENODEV ? 77 : 4;
+    }
+
+    ugdr::gpu::StaticPartitionSpscQueue queue;
+    status = ugdr::gpu::StaticPartitionSpscQueue::allocate(
+        config.outstanding_capacity, config.copy_warps,
+        config.device_batch, payload.stage_buffer_base(), &queue);
+    if (status != 0 || queue.start() != 0) {
+        return 5;
+    }
+
+    std::uint64_t next_task_id = 1;
+    std::vector<ugdr::gpu::CopyTask> submit_batch(config.host_batch);
+    const auto run_tasks = [&](std::uint64_t task_count) {
+        std::uint64_t submitted = 0;
+        std::uint64_t completed = 0;
+        std::uint64_t stalled = 0;
+        while (completed != task_count) {
+            bool progressed = false;
+            while (submitted != task_count) {
+                const std::size_t remaining =
+                    static_cast<std::size_t>(task_count - submitted);
+                const std::size_t requested =
+                    remaining < submit_batch.size() ? remaining
+                                                    : submit_batch.size();
+                for (std::size_t index = 0; index < requested; ++index) {
+                    if (payload.make_task(
+                            next_task_id + index, payload.target_address(),
+                            config.payload_bytes, 0,
+                            &submit_batch[index]) != 0) {
+                        return false;
+                    }
+                }
+                std::size_t accepted = 0;
+                const int submit_status = queue.try_submit_batch(
+                    submit_batch.data(), requested, &accepted);
+                if (submit_status == EAGAIN) {
+                    break;
+                }
+                if (submit_status != 0 || accepted == 0 ||
+                    accepted > requested) {
+                    return false;
+                }
+                next_task_id += accepted;
+                submitted += accepted;
+                progressed = true;
+                if (accepted != requested) {
+                    break;
+                }
+            }
+            ugdr::gpu::CopyCompletion completion;
+            while (queue.try_poll(&completion) == 0) {
+                if (completion.task_id == 0 ||
+                    completion.result !=
+                        ugdr::gpu::CopyTaskResult::success) {
+                    return false;
+                }
+                ++completed;
+                progressed = true;
+            }
+            stalled = progressed ? 0 : stalled + 1;
+            if (stalled > UINT64_C(100000000)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!run_tasks(config.warmup_tasks)) {
+        return 6;
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    if (!run_tasks(config.iterations)) {
+        return 6;
+    }
+    const auto end = std::chrono::steady_clock::now();
+    if (queue.request_stop() != 0 || queue.wait() != 0 ||
+        !queue.drained()) {
+        return 7;
+    }
+
+    ugdr::gpu::PayloadCheck check;
+    if (payload.verify(seed, &check) != 0) {
+        return 8;
+    }
+    const double elapsed =
+        std::chrono::duration<double>(end - begin).count();
+    PersistentCopyResult result;
+    result.model = PersistentCopyModel::static_partition_spsc;
+    result.payload_bytes = config.payload_bytes;
+    result.parent_wr_bytes = config.parent_wr_bytes;
+    result.outstanding_capacity = config.outstanding_capacity;
+    result.lane_capacity = queue.partition_capacity();
+    result.host_batch = config.host_batch;
+    result.device_batch = queue.device_batch();
+    result.copy_warps = config.copy_warps;
+    result.cta_count = 1;
+    result.ring_count = 2;
+    result.host_warp_aware = false;
+    result.host_meta_bytes = queue.host_meta_bytes();
+    result.host_system_atomic_operations =
+        queue.host_system_atomic_operations();
+    result.accepted_tasks = config.iterations;
+    result.completed_tasks = config.iterations;
+    result.drained_tasks = config.iterations;
+    result.copied_bytes = config.iterations * config.payload_bytes;
+    result.elapsed_seconds = elapsed;
+    result.task_millions_per_second =
+        static_cast<double>(config.iterations) / elapsed / 1.0e6;
+    result.copy_gigabytes_per_second =
+        static_cast<double>(result.copied_bytes) / elapsed / 1.0e9;
+    result.correctness_passed =
+        check.payload_matches && check.guards_intact;
+    result.measurement_valid = result.correctness_passed;
+    print_result("static_partition_spsc", result);
+    return result.measurement_valid ? 0 : 9;
+}
+
 template <PersistentCopyModel Model> int run_shell(PersistentCopyConfig config) {
     config.model = Model;
     if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
@@ -363,7 +500,7 @@ int dispatch(PersistentCopyConfig config) {
     case PersistentCopyModel::dynamic_sharded_spsc:
         return run_dynamic_sharded_spsc(config);
     case PersistentCopyModel::static_partition_spsc:
-        return run_shell<PersistentCopyModel::static_partition_spsc>(config);
+        return run_static_partition_spsc(config);
     case PersistentCopyModel::warp_specialized:
         config.shared_stage_count = 8;
         return run_shell<PersistentCopyModel::warp_specialized>(config);
