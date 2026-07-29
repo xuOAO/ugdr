@@ -260,9 +260,26 @@ struct alignas(32) DirectAtomicCompletionSlot {
     std::uint64_t batch_start;
 };
 
+struct alignas(64) DynamicShardedSpscControl {
+    std::uint64_t task_tail;
+    std::uint64_t completion_tail;
+    std::uint64_t stop_requested;
+};
+
+struct alignas(32) DynamicShardedSpscTaskSlot {
+    CopyTask task;
+};
+
+struct alignas(16) DynamicShardedSpscCompletionSlot {
+    CopyCompletion completion;
+};
+
 static_assert(sizeof(DirectAtomicControl) == 64);
 static_assert(sizeof(DirectAtomicTaskSlot) == 32);
 static_assert(sizeof(DirectAtomicCompletionSlot) == 32);
+static_assert(sizeof(DynamicShardedSpscControl) == 64);
+static_assert(sizeof(DynamicShardedSpscTaskSlot) == 32);
+static_assert(sizeof(DynamicShardedSpscCompletionSlot) == 16);
 
 __device__ __forceinline__ std::uint64_t system_load_acquire(
     const std::uint64_t *address) noexcept {
@@ -389,6 +406,73 @@ __global__ void direct_atomic_kernel(DirectAtomicControl *control,
     }
 }
 
+__global__ void dynamic_sharded_spsc_kernel(
+    DynamicShardedSpscControl *controls, DynamicShardedSpscTaskSlot *task_slots,
+    DynamicShardedSpscCompletionSlot *completion_slots, std::uint64_t lane_capacity,
+    std::uint64_t lane_capacity_mask, std::uint64_t stage_buffer_base) {
+    constexpr unsigned kFullWarp = 0xffffffffU;
+    const std::uint32_t lane = threadIdx.x & 31U;
+    const std::uint32_t warp = threadIdx.x >> 5U;
+    DynamicShardedSpscControl *const control = &controls[warp];
+    const std::uint64_t slot_base = static_cast<std::uint64_t>(warp) * lane_capacity;
+    std::uint64_t task_head = 0;
+
+    while (true) {
+        std::uint64_t task_tail = 0;
+        bool should_stop = false;
+        if (lane == 0) {
+            task_tail = system_load_acquire(&control->task_tail);
+            if (task_head >= task_tail &&
+                system_load_acquire(&control->stop_requested) != 0) {
+                const std::uint64_t final_tail =
+                    system_load_acquire(&control->task_tail);
+                should_stop = task_head >= final_tail;
+                task_tail = final_tail;
+            }
+        }
+        task_tail = __shfl_sync(kFullWarp, task_tail, 0);
+        should_stop = __shfl_sync(kFullWarp, should_stop, 0);
+        if (should_stop) {
+            return;
+        }
+        if (task_head >= task_tail) {
+            if (lane == 0) {
+                __nanosleep(64);
+            }
+            continue;
+        }
+
+        const std::uint64_t slot_index =
+            slot_base + (task_head & lane_capacity_mask);
+        DynamicShardedSpscTaskSlot *const task_slot = &task_slots[slot_index];
+        CopyTask task{};
+        if (lane == 0) {
+            task = task_slot->task;
+        }
+        task.target_address = __shfl_sync(kFullWarp, task.target_address, 0);
+        task.length = __shfl_sync(kFullWarp, task.length, 0);
+        task.relative_offset = __shfl_sync(kFullWarp, task.relative_offset, 0);
+
+        const auto *const source = reinterpret_cast<const std::uint8_t *>(
+            static_cast<std::uintptr_t>(stage_buffer_base + task.relative_offset));
+        auto *const target =
+            reinterpret_cast<std::uint8_t *>(
+                static_cast<std::uintptr_t>(task.target_address));
+        copy_cg_warp(source, target, task.length);
+        __syncwarp();
+
+        if (lane == 0) {
+            DynamicShardedSpscCompletionSlot *const completion_slot =
+                &completion_slots[slot_index];
+            completion_slot->completion.task_id = task.task_id;
+            completion_slot->completion.result = CopyTaskResult::success;
+            ++task_head;
+            system_store_release(&control->completion_tail, task_head);
+        }
+        task_head = __shfl_sync(kFullWarp, task_head, 0);
+    }
+}
+
 int cuda_status(cudaError_t status) noexcept {
     switch (status) {
     case cudaSuccess:
@@ -463,6 +547,29 @@ bool direct_atomic_allocation_size(std::size_t capacity, std::size_t *bytes) noe
     return true;
 }
 
+bool dynamic_sharded_spsc_allocation_size(std::size_t capacity,
+                                          std::uint32_t lane_count,
+                                          std::size_t *bytes) noexcept {
+    constexpr std::size_t kPerSlotBytes =
+        sizeof(DynamicShardedSpscTaskSlot) +
+        sizeof(DynamicShardedSpscCompletionSlot);
+    if (lane_count == 0 || lane_count > 32 || !is_power_of_two(capacity) ||
+        capacity < lane_count || capacity % lane_count != 0 ||
+        !is_power_of_two(capacity / lane_count)) {
+        return false;
+    }
+    const std::size_t control_bytes =
+        static_cast<std::size_t>(lane_count) *
+        sizeof(DynamicShardedSpscControl);
+    if (capacity >
+        (std::numeric_limits<std::size_t>::max() - control_bytes) /
+            kPerSlotBytes) {
+        return false;
+    }
+    *bytes = control_bytes + capacity * kPerSlotBytes;
+    return true;
+}
+
 DirectAtomicControl *direct_atomic_control(void *memory) noexcept {
     return static_cast<DirectAtomicControl *>(memory);
 }
@@ -475,6 +582,22 @@ DirectAtomicCompletionSlot *direct_atomic_completion_slots(void *memory,
                                                            std::size_t capacity) noexcept {
     return reinterpret_cast<DirectAtomicCompletionSlot *>(direct_atomic_task_slots(memory) +
                                                           capacity);
+}
+
+DynamicShardedSpscControl *dynamic_sharded_spsc_controls(void *memory) noexcept {
+    return static_cast<DynamicShardedSpscControl *>(memory);
+}
+
+DynamicShardedSpscTaskSlot *dynamic_sharded_spsc_task_slots(
+    void *memory, std::uint32_t lane_count) noexcept {
+    return reinterpret_cast<DynamicShardedSpscTaskSlot *>(
+        dynamic_sharded_spsc_controls(memory) + lane_count);
+}
+
+DynamicShardedSpscCompletionSlot *dynamic_sharded_spsc_completion_slots(
+    void *memory, std::uint32_t lane_count, std::size_t capacity) noexcept {
+    return reinterpret_cast<DynamicShardedSpscCompletionSlot *>(
+        dynamic_sharded_spsc_task_slots(memory, lane_count) + capacity);
 }
 
 std::uint64_t host_load_acquire(const std::uint64_t *address) noexcept {
@@ -538,6 +661,13 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
         config.device_batch > config.outstanding_capacity || config.copy_warps == 0 ||
         config.copy_warps > 32 || config.warmup_tasks == 0 || config.iterations == 0) {
         return EINVAL;
+    }
+    if (config.model == PersistentCopyModel::dynamic_sharded_spsc) {
+        std::size_t bytes = 0;
+        if (!dynamic_sharded_spsc_allocation_size(
+                config.outstanding_capacity, config.copy_warps, &bytes)) {
+            return EINVAL;
+        }
     }
     if (config.model == PersistentCopyModel::warp_specialized &&
         (config.copy_warps > 30 || config.shared_stage_count == 0)) {
@@ -1082,6 +1212,271 @@ bool DirectAtomicQueue::drained() const noexcept {
 }
 
 bool DirectAtomicQueue::empty() const noexcept {
+    return memory_.empty();
+}
+
+DynamicShardedSpscQueue::~DynamicShardedSpscQueue() {
+    if (running_) {
+        (void)request_stop();
+        (void)wait();
+    }
+    (void)reset();
+}
+
+int DynamicShardedSpscQueue::allocate(
+    std::size_t capacity, std::uint32_t copy_warps,
+    std::uint64_t stage_buffer_base,
+    DynamicShardedSpscQueue *queue) noexcept {
+    std::size_t bytes = 0;
+    if (queue == nullptr || !queue->empty() || stage_buffer_base == 0 ||
+        !dynamic_sharded_spsc_allocation_size(capacity, copy_warps, &bytes)) {
+        return EINVAL;
+    }
+    const int status = MappedPinnedMemory::allocate(bytes, &queue->memory_);
+    if (status != 0) {
+        return status;
+    }
+    queue->capacity_ = capacity;
+    queue->lane_capacity_ = capacity / copy_warps;
+    queue->lane_capacity_mask_ = queue->lane_capacity_ - 1;
+    queue->lane_count_ = copy_warps;
+    queue->stage_buffer_base_ = stage_buffer_base;
+    return 0;
+}
+
+int DynamicShardedSpscQueue::start() noexcept {
+    if (empty() || running_) {
+        return EINVAL;
+    }
+    std::memset(memory_.host_data(), 0, memory_.size());
+    std::memset(submit_tails_, 0, sizeof(submit_tails_));
+    std::memset(completion_heads_, 0, sizeof(completion_heads_));
+    submit_cursor_ = 0;
+    completion_cursor_ = 0;
+    accepted_tasks_ = 0;
+    completed_tasks_ = 0;
+    accepting_ = true;
+    running_ = true;
+
+    const std::uintptr_t device_base =
+        static_cast<std::uintptr_t>(memory_.device_address());
+    auto *const controls_device =
+        reinterpret_cast<DynamicShardedSpscControl *>(device_base);
+    auto *const task_slots_device =
+        reinterpret_cast<DynamicShardedSpscTaskSlot *>(
+            device_base + lane_count_ *
+                              sizeof(DynamicShardedSpscControl));
+    auto *const completion_slots_device =
+        reinterpret_cast<DynamicShardedSpscCompletionSlot *>(
+            device_base + lane_count_ *
+                              sizeof(DynamicShardedSpscControl) +
+            capacity_ * sizeof(DynamicShardedSpscTaskSlot));
+    dynamic_sharded_spsc_kernel<<<1, lane_count_ * 32>>>(
+        controls_device, task_slots_device, completion_slots_device,
+        lane_capacity_, lane_capacity_mask_, stage_buffer_base_);
+    const int status = cuda_status(cudaGetLastError());
+    if (status != 0) {
+        running_ = false;
+        accepting_ = false;
+    }
+    return status;
+}
+
+int DynamicShardedSpscQueue::try_submit(const CopyTask &task) noexcept {
+    std::size_t submitted_count = 0;
+    return try_submit_batch(&task, 1, &submitted_count);
+}
+
+int DynamicShardedSpscQueue::try_submit_batch(
+    const CopyTask *tasks, std::size_t task_count,
+    std::size_t *submitted_count) noexcept {
+    if (submitted_count != nullptr) {
+        *submitted_count = 0;
+    }
+    if (!running_ || !accepting_ || tasks == nullptr || task_count == 0 ||
+        submitted_count == nullptr) {
+        return EINVAL;
+    }
+    const std::size_t outstanding =
+        static_cast<std::size_t>(accepted_tasks_ - completed_tasks_);
+    if (outstanding >= capacity_) {
+        return EAGAIN;
+    }
+    const std::size_t available = capacity_ - outstanding;
+    const std::size_t count =
+        task_count < available ? task_count : available;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (tasks[index].target_address == 0 || tasks[index].length == 0) {
+            return EINVAL;
+        }
+    }
+
+    auto *const controls =
+        dynamic_sharded_spsc_controls(memory_.host_data());
+    auto *const slots = dynamic_sharded_spsc_task_slots(
+        memory_.host_data(), lane_count_);
+    std::uint32_t dirty_lanes = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+        std::uint32_t selected_lane = submit_cursor_;
+        bool found_lane = false;
+        for (std::uint32_t visited = 0; visited < lane_count_; ++visited) {
+            const std::uint64_t lane_outstanding =
+                submit_tails_[selected_lane] -
+                completion_heads_[selected_lane];
+            if (lane_outstanding < lane_capacity_) {
+                found_lane = true;
+                break;
+            }
+            ++selected_lane;
+            if (selected_lane == lane_count_) {
+                selected_lane = 0;
+            }
+        }
+        if (!found_lane) {
+            return EIO;
+        }
+        const std::uint64_t slot_index =
+            static_cast<std::uint64_t>(selected_lane) * lane_capacity_ +
+            (submit_tails_[selected_lane] & lane_capacity_mask_);
+        slots[slot_index].task = tasks[index];
+        ++submit_tails_[selected_lane];
+        dirty_lanes |= UINT32_C(1) << selected_lane;
+        submit_cursor_ = selected_lane + 1;
+        if (submit_cursor_ == lane_count_) {
+            submit_cursor_ = 0;
+        }
+    }
+    for (std::uint32_t lane = 0; lane < lane_count_; ++lane) {
+        if ((dirty_lanes & (UINT32_C(1) << lane)) != 0) {
+            host_store_release(&controls[lane].task_tail,
+                               submit_tails_[lane]);
+        }
+    }
+    accepted_tasks_ += count;
+    *submitted_count = count;
+    return 0;
+}
+
+int DynamicShardedSpscQueue::try_poll(
+    CopyCompletion *completion) noexcept {
+    if (completion == nullptr || empty()) {
+        return EINVAL;
+    }
+    auto *const controls =
+        dynamic_sharded_spsc_controls(memory_.host_data());
+    auto *const slots = dynamic_sharded_spsc_completion_slots(
+        memory_.host_data(), lane_count_, capacity_);
+    std::uint32_t selected_lane = completion_cursor_;
+    for (std::uint32_t visited = 0; visited < lane_count_; ++visited) {
+        const std::uint64_t completion_tail =
+            host_load_acquire(&controls[selected_lane].completion_tail);
+        if (completion_heads_[selected_lane] < completion_tail) {
+            const std::uint64_t slot_index =
+                static_cast<std::uint64_t>(selected_lane) *
+                    lane_capacity_ +
+                (completion_heads_[selected_lane] &
+                 lane_capacity_mask_);
+            *completion = slots[slot_index].completion;
+            ++completion_heads_[selected_lane];
+            ++completed_tasks_;
+            completion_cursor_ = selected_lane + 1;
+            if (completion_cursor_ == lane_count_) {
+                completion_cursor_ = 0;
+            }
+            return 0;
+        }
+        ++selected_lane;
+        if (selected_lane == lane_count_) {
+            selected_lane = 0;
+        }
+    }
+    return EAGAIN;
+}
+
+int DynamicShardedSpscQueue::request_stop() noexcept {
+    if (!running_ || !accepting_) {
+        return EINVAL;
+    }
+    accepting_ = false;
+    auto *const controls =
+        dynamic_sharded_spsc_controls(memory_.host_data());
+    for (std::uint32_t lane = 0; lane < lane_count_; ++lane) {
+        host_store_release(&controls[lane].stop_requested, 1);
+    }
+    return 0;
+}
+
+int DynamicShardedSpscQueue::wait() noexcept {
+    if (!running_ || accepting_) {
+        return EINVAL;
+    }
+    const int status = cuda_status(cudaDeviceSynchronize());
+    running_ = false;
+    return status;
+}
+
+int DynamicShardedSpscQueue::reset() noexcept {
+    if (running_) {
+        return EBUSY;
+    }
+    const int status = memory_.reset();
+    capacity_ = 0;
+    lane_capacity_ = 0;
+    lane_capacity_mask_ = 0;
+    lane_count_ = 0;
+    submit_cursor_ = 0;
+    completion_cursor_ = 0;
+    stage_buffer_base_ = 0;
+    std::memset(submit_tails_, 0, sizeof(submit_tails_));
+    std::memset(completion_heads_, 0, sizeof(completion_heads_));
+    accepted_tasks_ = 0;
+    completed_tasks_ = 0;
+    accepting_ = false;
+    return status;
+}
+
+std::size_t DynamicShardedSpscQueue::capacity() const noexcept {
+    return capacity_;
+}
+
+std::size_t DynamicShardedSpscQueue::lane_capacity() const noexcept {
+    return lane_capacity_;
+}
+
+std::size_t DynamicShardedSpscQueue::host_meta_bytes() const noexcept {
+    return memory_.size();
+}
+
+std::uint32_t DynamicShardedSpscQueue::lane_count() const noexcept {
+    return lane_count_;
+}
+
+std::uint64_t DynamicShardedSpscQueue::accepted_tasks() const noexcept {
+    return accepted_tasks_;
+}
+
+std::uint64_t DynamicShardedSpscQueue::completed_tasks() const noexcept {
+    return completed_tasks_;
+}
+
+std::uint64_t
+DynamicShardedSpscQueue::host_system_atomic_operations() const noexcept {
+    return 0;
+}
+
+bool DynamicShardedSpscQueue::running() const noexcept {
+    return running_;
+}
+
+bool DynamicShardedSpscQueue::accepting() const noexcept {
+    return accepting_;
+}
+
+bool DynamicShardedSpscQueue::drained() const noexcept {
+    return accepted_tasks_ == completed_tasks_;
+}
+
+bool DynamicShardedSpscQueue::empty() const noexcept {
     return memory_.empty();
 }
 
