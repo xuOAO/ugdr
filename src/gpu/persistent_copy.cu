@@ -729,29 +729,27 @@ __global__ void warp_specialized_kernel(
                 continue;
             }
 
-            if (lane == 0) {
-                for (std::uint32_t index = 0;
-                     index < task_count; ++index) {
-                    const std::uint64_t task_index =
-                        task_head + index;
-                    auto *const shared_slot =
-                        &shared_task_slots[
-                            task_index &
-                            shared_stage_mask];
-                    while (shared_atomic_load(
-                               &shared_slot->sequence) !=
-                           task_index) {
-                        __nanosleep(64);
-                    }
-                    shared_slot->task =
-                        external_task_slots[
-                            task_index & capacity_mask].task;
-                    __threadfence_block();
-                    shared_atomic_store(
-                        &shared_slot->sequence,
-                        task_index + 1);
+            if (lane < task_count) {
+                const std::uint64_t task_index =
+                    task_head + lane;
+                auto *const shared_slot =
+                    &shared_task_slots[
+                        task_index & shared_stage_mask];
+                while (shared_atomic_load(
+                           &shared_slot->sequence) !=
+                       task_index) {
+                    __nanosleep(64);
                 }
-                task_head += task_count;
+                shared_slot->task =
+                    external_task_slots[
+                        task_index & capacity_mask].task;
+                __threadfence_block();
+                shared_atomic_store(
+                    &shared_slot->sequence, task_index + 1);
+            }
+            __syncwarp();
+            task_head += task_count;
+            if (lane == 0) {
                 shared_atomic_store(
                     &shared_control->task_publish, task_head);
             }
@@ -851,6 +849,7 @@ __global__ void warp_specialized_kernel(
 
     std::uint64_t completion_head = 0;
     while (true) {
+        std::uint32_t completion_limit = 0;
         std::uint32_t completion_count = 0;
         bool should_stop = false;
         if (lane == 0) {
@@ -859,36 +858,53 @@ __global__ void warp_specialized_kernel(
                     &shared_control->task_publish);
             const std::uint64_t available =
                 task_publish - completion_head;
-            const std::uint32_t limit =
+            completion_limit =
                 static_cast<std::uint32_t>(
                     available < TasksPerBatch
                         ? available
                         : TasksPerBatch);
-            while (completion_count < limit) {
-                const std::uint64_t completion_index =
-                    completion_head + completion_count;
-                auto *const completion_slot =
-                    &shared_completion_slots[
-                        completion_index & shared_stage_mask];
-                if (shared_atomic_load(
-                        &completion_slot->sequence) !=
-                    completion_index + 1) {
-                    break;
-                }
-                ++completion_count;
-            }
             should_stop =
                 shared_atomic_load(
                     &shared_control->ingress_done) != 0 &&
                 completion_head >= task_publish;
         }
-        completion_count =
-            __shfl_sync(kFullWarp, completion_count, 0);
+        completion_limit =
+            __shfl_sync(kFullWarp, completion_limit, 0);
         should_stop =
             __shfl_sync(kFullWarp, should_stop, 0);
         if (should_stop) {
             return;
         }
+
+        bool completion_ready = false;
+        if (lane < completion_limit) {
+            const std::uint64_t completion_index =
+                completion_head + lane;
+            completion_ready =
+                shared_atomic_load(
+                    &shared_completion_slots[
+                        completion_index &
+                        shared_stage_mask].sequence) ==
+                completion_index + 1;
+        }
+        const unsigned ready_mask =
+            __ballot_sync(kFullWarp, completion_ready);
+        if (lane == 0) {
+            unsigned expected_mask = kFullWarp;
+            if (completion_limit < 32) {
+                expected_mask =
+                    (1U << completion_limit) - 1U;
+            }
+            const unsigned missing_mask =
+                expected_mask & ~ready_mask;
+            completion_count =
+                missing_mask == 0
+                    ? completion_limit
+                    : static_cast<std::uint32_t>(
+                          __ffs(missing_mask) - 1);
+        }
+        completion_count =
+            __shfl_sync(kFullWarp, completion_count, 0);
         if (completion_count == 0) {
             if (lane == 0) {
                 __nanosleep(64);
@@ -910,18 +926,17 @@ __global__ void warp_specialized_kernel(
             system_store_release(
                 &control->completion_tail,
                 completion_head + completion_count);
-            for (std::uint32_t index = 0;
-                 index < completion_count; ++index) {
-                const std::uint64_t completion_index =
-                    completion_head + index;
-                shared_atomic_store(
-                    &shared_completion_slots[
-                        completion_index &
-                        shared_stage_mask].sequence,
-                    completion_index +
-                        shared_stage_count);
-            }
         }
+        if (lane < completion_count) {
+            const std::uint64_t completion_index =
+                completion_head + lane;
+            shared_atomic_store(
+                &shared_completion_slots[
+                    completion_index &
+                    shared_stage_mask].sequence,
+                completion_index + shared_stage_count);
+        }
+        __syncwarp();
         completion_head += completion_count;
     }
 }

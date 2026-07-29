@@ -1071,6 +1071,7 @@ int main() {
     };
     constexpr WarpSpecializedCase warp_specialized_cases[]{
         {1, 1, 2},
+        {4, 2, 2},
         {4, 4, 8},
         {16, 8, 32},
         {30, 32, 32},
