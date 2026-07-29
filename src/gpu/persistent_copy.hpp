@@ -207,6 +207,7 @@ class DirectAtomicQueue {
   private:
     MappedPinnedMemory memory_;
     std::size_t capacity_ = 0;
+    std::size_t capacity_mask_ = 0;
     std::uint32_t copy_warps_ = 0;
     std::uint64_t stage_buffer_base_ = 0;
     std::uint64_t submit_tail_ = 0;
