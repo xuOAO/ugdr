@@ -404,10 +404,11 @@ __device__ __forceinline__ void shared_atomic_store(
 }
 
 __device__ __forceinline__ bool shared_atomic_claim(
-    std::uint64_t *address, std::uint64_t expected) noexcept {
+    std::uint64_t *address, std::uint64_t expected,
+    std::uint64_t desired) noexcept {
     return atomicCAS(reinterpret_cast<unsigned long long *>(address),
                      static_cast<unsigned long long>(expected),
-                     static_cast<unsigned long long>(expected + 1)) ==
+                     static_cast<unsigned long long>(desired)) ==
            expected;
 }
 
@@ -673,7 +674,8 @@ __global__ void static_partition_spsc_kernel(
 }
 
 template <std::uint32_t TasksPerBatch,
-          std::uint32_t SharedQueueDepth>
+          std::uint32_t SharedQueueDepth,
+          std::uint32_t CopyClaimBatch>
 __global__ void warp_specialized_kernel(
     WarpSpecializedControl *control,
     WarpSpecializedTaskSlot *external_task_slots,
@@ -687,6 +689,8 @@ __global__ void warp_specialized_kernel(
     static_assert(
         (SharedQueueDepth & (SharedQueueDepth - 1)) == 0);
     static_assert(TasksPerBatch <= SharedQueueDepth);
+    static_assert(CopyClaimBatch > 0);
+    static_assert(CopyClaimBatch <= SharedQueueDepth);
     constexpr std::uint64_t kSharedQueueMask =
         SharedQueueDepth - 1;
     extern __shared__ __align__(64) std::uint8_t shared_memory[];
@@ -784,7 +788,8 @@ __global__ void warp_specialized_kernel(
 
     if (warp <= copy_warps) {
         while (true) {
-            std::uint64_t task_index = kNoTask;
+            std::uint64_t task_base = kNoTask;
+            std::uint32_t task_count = 0;
             bool should_stop = false;
             if (lane == 0) {
                 const std::uint64_t task_claim =
@@ -794,10 +799,20 @@ __global__ void warp_specialized_kernel(
                     shared_atomic_load(
                         &shared_control->task_publish);
                 if (task_claim < task_publish) {
+                    const std::uint64_t available =
+                        task_publish - task_claim;
+                    task_count =
+                        static_cast<std::uint32_t>(
+                            available < CopyClaimBatch
+                                ? available
+                                : CopyClaimBatch);
                     if (shared_atomic_claim(
                             &shared_control->task_claim,
-                            task_claim)) {
-                        task_index = task_claim;
+                            task_claim,
+                            task_claim + task_count)) {
+                        task_base = task_claim;
+                    } else {
+                        task_count = 0;
                     }
                 } else if (
                     shared_atomic_load(
@@ -805,70 +820,78 @@ __global__ void warp_specialized_kernel(
                     should_stop = task_claim >= task_publish;
                 }
             }
-            task_index =
-                __shfl_sync(kFullWarp, task_index, 0);
+            task_base =
+                __shfl_sync(kFullWarp, task_base, 0);
+            task_count =
+                __shfl_sync(kFullWarp, task_count, 0);
             should_stop =
                 __shfl_sync(kFullWarp, should_stop, 0);
             if (should_stop) {
                 return;
             }
-            if (task_index == kNoTask) {
+            if (task_base == kNoTask) {
                 if (lane == 0) {
                     __nanosleep(64);
                 }
                 continue;
             }
 
-            WarpSpecializedSharedTaskSlot *const task_slot =
-                &shared_task_slots[
-                    task_index & kSharedQueueMask];
-            CopyTask task{};
-            if (lane == 0) {
-                while (shared_atomic_load(
-                           &task_slot->sequence) != task_index + 1) {
-                    __nanosleep(64);
+#pragma unroll 1
+            for (std::uint32_t batch_index = 0;
+                 batch_index < task_count; ++batch_index) {
+                const std::uint64_t task_index =
+                    task_base + batch_index;
+                auto *const task_slot =
+                    &shared_task_slots[
+                        task_index & kSharedQueueMask];
+                CopyTask task{};
+                if (lane == 0) {
+                    while (shared_atomic_load(
+                               &task_slot->sequence) !=
+                           task_index + 1) {
+                        __nanosleep(64);
+                    }
+                    task = task_slot->task;
                 }
-                task = task_slot->task;
-            }
-            task.target_address = __shfl_sync(
-                kFullWarp, task.target_address, 0);
-            task.length =
-                __shfl_sync(kFullWarp, task.length, 0);
-            task.relative_offset = __shfl_sync(
-                kFullWarp, task.relative_offset, 0);
-            const auto *const source =
-                reinterpret_cast<const std::uint8_t *>(
-                    static_cast<std::uintptr_t>(
-                        stage_buffer_base +
-                        task.relative_offset));
-            auto *const target =
-                reinterpret_cast<std::uint8_t *>(
-                    static_cast<std::uintptr_t>(
-                        task.target_address));
-            copy_cg_warp(source, target, task.length);
-            __syncwarp();
+                task.target_address = __shfl_sync(
+                    kFullWarp, task.target_address, 0);
+                task.length = __shfl_sync(
+                    kFullWarp, task.length, 0);
+                task.relative_offset = __shfl_sync(
+                    kFullWarp, task.relative_offset, 0);
+                const auto *const source =
+                    reinterpret_cast<const std::uint8_t *>(
+                        static_cast<std::uintptr_t>(
+                            stage_buffer_base +
+                            task.relative_offset));
+                auto *const target =
+                    reinterpret_cast<std::uint8_t *>(
+                        static_cast<std::uintptr_t>(
+                            task.target_address));
+                copy_cg_warp(source, target, task.length);
+                __syncwarp();
 
-            if (lane == 0) {
-                shared_atomic_store(
-                    &task_slot->sequence,
-                    task_index + SharedQueueDepth);
-                WarpSpecializedSharedCompletionSlot *const
-                    completion_slot =
+                if (lane == 0) {
+                    shared_atomic_store(
+                        &task_slot->sequence,
+                        task_index + SharedQueueDepth);
+                    auto *const completion_slot =
                         &shared_completion_slots[
                             task_index & kSharedQueueMask];
-                while (shared_atomic_load(
-                           &completion_slot->sequence) !=
-                       task_index) {
-                    __nanosleep(64);
+                    while (shared_atomic_load(
+                               &completion_slot->sequence) !=
+                           task_index) {
+                        __nanosleep(64);
+                    }
+                    completion_slot->completion.task_id =
+                        task.task_id;
+                    completion_slot->completion.result =
+                        CopyTaskResult::success;
+                    __threadfence_block();
+                    shared_atomic_store(
+                        &completion_slot->sequence,
+                        task_index + 1);
                 }
-                completion_slot->completion.task_id =
-                    task.task_id;
-                completion_slot->completion.result =
-                    CopyTaskResult::success;
-                __threadfence_block();
-                shared_atomic_store(
-                    &completion_slot->sequence,
-                    task_index + 1);
             }
         }
     }
@@ -1235,7 +1258,8 @@ __global__ void warp_specialized_pipeline_kernel(
 }
 
 template <std::uint32_t TasksPerBatch,
-          std::uint32_t SharedQueueDepth>
+          std::uint32_t SharedQueueDepth,
+          std::uint32_t CopyClaimBatch = 2>
 void launch_warp_specialized_kernel(
     WarpSpecializedControl *control,
     WarpSpecializedTaskSlot *task_slots,
@@ -1244,7 +1268,8 @@ void launch_warp_specialized_kernel(
     std::uint64_t stage_buffer_base,
     std::uint32_t thread_count,
     std::size_t dynamic_shared_memory_bytes) {
-    warp_specialized_kernel<TasksPerBatch, SharedQueueDepth>
+    warp_specialized_kernel<
+        TasksPerBatch, SharedQueueDepth, CopyClaimBatch>
         <<<1, thread_count, dynamic_shared_memory_bytes>>>(
             control, task_slots, completion_slots,
             capacity_mask, copy_warps, stage_buffer_base);
