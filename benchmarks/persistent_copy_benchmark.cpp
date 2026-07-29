@@ -193,7 +193,7 @@ int run_dynamic_sharded_spsc(PersistentCopyConfig config) {
 
     ugdr::gpu::DynamicShardedSpscQueue queue;
     status = ugdr::gpu::DynamicShardedSpscQueue::allocate(
-        config.outstanding_capacity, config.copy_warps,
+        config.outstanding_capacity, config.copy_warps, config.device_batch,
         payload.stage_buffer_base(), &queue);
     if (status != 0 || queue.start() != 0) {
         return 5;
@@ -281,7 +281,7 @@ int run_dynamic_sharded_spsc(PersistentCopyConfig config) {
     result.outstanding_capacity = config.outstanding_capacity;
     result.lane_capacity = queue.lane_capacity();
     result.host_batch = config.host_batch;
-    result.device_batch = 1;
+    result.device_batch = queue.device_batch();
     result.copy_warps = config.copy_warps;
     result.cta_count = 1;
     result.ring_count = config.copy_warps * 2;

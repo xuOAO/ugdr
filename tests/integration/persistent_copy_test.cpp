@@ -453,7 +453,8 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
     return 0;
 }
 
-int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps) {
+int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
+                                     std::uint32_t device_batch) {
     constexpr std::size_t payload_bytes = 8192;
     constexpr std::size_t guard_bytes = 16;
     constexpr std::size_t capacity = 32;
@@ -468,16 +469,21 @@ int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps) {
     }
     ugdr::gpu::DynamicShardedSpscQueue queue;
     if (ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            3, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
+            3, 4, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
         ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            8, 16, payload.stage_buffer_base(), &queue) != EINVAL ||
+            8, 16, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
         ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            capacity, 3, payload.stage_buffer_base(), &queue) != EINVAL ||
+            capacity, 3, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
         ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            capacity, copy_warps, payload.stage_buffer_base(), &queue) != 0 ||
+            capacity, copy_warps, 3, payload.stage_buffer_base(), &queue) !=
+            EINVAL ||
+        ugdr::gpu::DynamicShardedSpscQueue::allocate(
+            capacity, copy_warps, device_batch,
+            payload.stage_buffer_base(), &queue) != 0 ||
         queue.capacity() != capacity ||
         queue.lane_capacity() != capacity / copy_warps ||
         queue.lane_count() != copy_warps ||
+        queue.device_batch() != device_batch ||
         queue.host_meta_bytes() != copy_warps * 64 + capacity * 48 ||
         queue.host_system_atomic_operations() != 0 || queue.start() != 0 ||
         !queue.running() || !queue.accepting()) {
@@ -621,9 +627,16 @@ int main() {
             return status;
         }
     }
-    constexpr std::uint32_t dynamic_copy_warps[]{4, 8, 16, 32};
+    for (const std::uint32_t device_batch : device_batches) {
+        const int status =
+            dynamic_sharded_spsc_queue_smoke(4, device_batch);
+        if (status != 0) {
+            return status;
+        }
+    }
+    constexpr std::uint32_t dynamic_copy_warps[]{8, 16, 32};
     for (const std::uint32_t copy_warps : dynamic_copy_warps) {
-        const int status = dynamic_sharded_spsc_queue_smoke(copy_warps);
+        const int status = dynamic_sharded_spsc_queue_smoke(copy_warps, 4);
         if (status != 0) {
             return status;
         }

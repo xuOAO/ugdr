@@ -232,7 +232,7 @@ class DynamicShardedSpscQueue {
     DynamicShardedSpscQueue &operator=(const DynamicShardedSpscQueue &) = delete;
 
     static int allocate(std::size_t capacity, std::uint32_t copy_warps,
-                        std::uint64_t stage_buffer_base,
+                        std::uint32_t device_batch, std::uint64_t stage_buffer_base,
                         DynamicShardedSpscQueue *queue) noexcept;
     int start() noexcept;
     int try_submit(const CopyTask &task) noexcept;
@@ -247,6 +247,7 @@ class DynamicShardedSpscQueue {
     [[nodiscard]] std::size_t lane_capacity() const noexcept;
     [[nodiscard]] std::size_t host_meta_bytes() const noexcept;
     [[nodiscard]] std::uint32_t lane_count() const noexcept;
+    [[nodiscard]] std::uint32_t device_batch() const noexcept;
     [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
     [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
     [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
@@ -261,6 +262,7 @@ class DynamicShardedSpscQueue {
     std::size_t lane_capacity_ = 0;
     std::size_t lane_capacity_mask_ = 0;
     std::uint32_t lane_count_ = 0;
+    std::uint32_t device_batch_ = 0;
     std::uint32_t submit_cursor_ = 0;
     std::uint32_t completion_cursor_ = 0;
     std::uint64_t stage_buffer_base_ = 0;
