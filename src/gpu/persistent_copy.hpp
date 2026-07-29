@@ -64,7 +64,7 @@ struct PersistentCopyConfig {
     std::uint32_t device_ordinal = 0;
     std::uint32_t copy_warps = 4;
     std::uint32_t device_batch = 4;
-    std::uint32_t shared_stage_count = 0;
+    std::uint32_t shared_queue_depth = 0;
     std::size_t payload_bytes = kPersistentCopyMaxPayloadBytes;
     std::size_t parent_wr_bytes = 64 * 1024;
     std::size_t outstanding_capacity = 1024;
@@ -333,7 +333,7 @@ class WarpSpecializedQueue {
 
     static int allocate(std::size_t capacity, std::uint32_t copy_warps,
                         std::uint32_t device_batch,
-                        std::uint32_t shared_stage_count,
+                        std::uint32_t shared_queue_depth,
                         std::uint64_t stage_buffer_base,
                         WarpSpecializedQueue *queue) noexcept;
     int start() noexcept;
@@ -350,7 +350,7 @@ class WarpSpecializedQueue {
     [[nodiscard]] std::size_t dynamic_shared_memory_bytes() const noexcept;
     [[nodiscard]] std::uint32_t copy_warps() const noexcept;
     [[nodiscard]] std::uint32_t device_batch() const noexcept;
-    [[nodiscard]] std::uint32_t shared_stage_count() const noexcept;
+    [[nodiscard]] std::uint32_t shared_queue_depth() const noexcept;
     [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
     [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
     [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
@@ -366,7 +366,7 @@ class WarpSpecializedQueue {
     std::size_t dynamic_shared_memory_bytes_ = 0;
     std::uint32_t copy_warps_ = 0;
     std::uint32_t device_batch_ = 0;
-    std::uint32_t shared_stage_count_ = 0;
+    std::uint32_t shared_queue_depth_ = 0;
     std::uint64_t stage_buffer_base_ = 0;
     std::uint64_t submit_tail_ = 0;
     std::uint64_t completion_head_ = 0;

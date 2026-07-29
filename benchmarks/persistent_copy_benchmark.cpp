@@ -468,7 +468,7 @@ int run_warp_specialized(PersistentCopyConfig config) {
     ugdr::gpu::WarpSpecializedQueue queue;
     status = ugdr::gpu::WarpSpecializedQueue::allocate(
         config.outstanding_capacity, config.copy_warps,
-        config.device_batch, config.shared_stage_count,
+        config.device_batch, config.shared_queue_depth,
         payload.stage_buffer_base(), &queue);
     if (status != 0 || queue.start() != 0) {
         return 5;
@@ -602,7 +602,7 @@ int dispatch(PersistentCopyConfig config) {
     case PersistentCopyModel::static_partition_spsc:
         return run_static_partition_spsc(config);
     case PersistentCopyModel::warp_specialized:
-        config.shared_stage_count = 32;
+        config.shared_queue_depth = 32;
         return run_warp_specialized(config);
     }
     return 2;
