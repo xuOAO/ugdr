@@ -94,7 +94,7 @@ struct PersistentCopyResult {
     bool host_warp_aware = false;
     std::size_t host_meta_bytes = 0;
     std::uint64_t host_system_atomic_operations = 0;
-    std::size_t dynamic_shared_memory_bytes = 0;
+    std::size_t shared_memory_bytes = 0;
     std::uint32_t registers_per_thread = 0;
     double occupancy = 0.0;
     std::uint64_t accepted_tasks = 0;
@@ -355,7 +355,7 @@ class WarpSpecializedQueue {
 
     [[nodiscard]] std::size_t capacity() const noexcept;
     [[nodiscard]] std::size_t host_meta_bytes() const noexcept;
-    [[nodiscard]] std::size_t dynamic_shared_memory_bytes() const noexcept;
+    [[nodiscard]] std::size_t shared_memory_bytes() const noexcept;
     [[nodiscard]] std::uint32_t copy_warps() const noexcept;
     [[nodiscard]] std::uint32_t device_batch() const noexcept;
     [[nodiscard]] std::uint32_t shared_queue_depth() const noexcept;
@@ -373,7 +373,7 @@ class WarpSpecializedQueue {
     MappedPinnedMemory memory_;
     std::size_t capacity_ = 0;
     std::size_t capacity_mask_ = 0;
-    std::size_t dynamic_shared_memory_bytes_ = 0;
+    std::size_t shared_memory_bytes_ = 0;
     std::uint32_t copy_warps_ = 0;
     std::uint32_t device_batch_ = 0;
     std::uint32_t shared_queue_depth_ = 0;

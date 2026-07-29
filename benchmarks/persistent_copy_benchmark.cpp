@@ -21,7 +21,7 @@ void print_result(const char *phase, const PersistentCopyResult &result) {
                 "payload_bytes=%zu parent_wr_bytes=%zu outstanding_capacity=%zu "
                 "lane_capacity=%zu host_batch=%zu device_batch=%u copy_warps=%u cta_count=%u "
                 "ring_count=%u host_warp_aware=%u host_meta_bytes=%zu "
-                "host_system_atomic_operations=%llu dynamic_shared_memory_bytes=%zu "
+                "host_system_atomic_operations=%llu shared_memory_bytes=%zu "
                 "registers_per_thread=%u occupancy=%.6f accepted_tasks=%llu completed_tasks=%llu "
                 "drained_tasks=%llu copied_bytes=%llu elapsed_seconds=%.9f task_MTask_per_s=%.6f "
                 "copy_GB_per_s=%.6f task_p50_us=%.3f task_p99_us=%.3f host_cpu_percent=%.3f "
@@ -32,7 +32,7 @@ void print_result(const char *phase, const PersistentCopyResult &result) {
                 result.host_batch, result.device_batch, result.copy_warps, result.cta_count,
                 result.ring_count, result.host_warp_aware ? 1U : 0U, result.host_meta_bytes,
                 static_cast<unsigned long long>(result.host_system_atomic_operations),
-                result.dynamic_shared_memory_bytes, result.registers_per_thread, result.occupancy,
+                result.shared_memory_bytes, result.registers_per_thread, result.occupancy,
                 static_cast<unsigned long long>(result.accepted_tasks),
                 static_cast<unsigned long long>(result.completed_tasks),
                 static_cast<unsigned long long>(result.drained_tasks),
@@ -586,8 +586,8 @@ int run_warp_specialized(PersistentCopyConfig config) {
     result.host_meta_bytes = queue.host_meta_bytes();
     result.host_system_atomic_operations =
         queue.host_system_atomic_operations();
-    result.dynamic_shared_memory_bytes =
-        queue.dynamic_shared_memory_bytes();
+    result.shared_memory_bytes =
+        queue.shared_memory_bytes();
     result.accepted_tasks = config.iterations;
     result.completed_tasks = config.iterations;
     result.drained_tasks = config.iterations;

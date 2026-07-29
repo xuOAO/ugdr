@@ -113,6 +113,20 @@ bool common_contract_smoke() {
     config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
     config.outstanding_capacity = 2;
     config.copy_warps = 4;
+    config.model =
+        ugdr::gpu::PersistentCopyModel::
+            warp_specialized_pipeline;
+    config.shared_queue_depth = 8;
+    if (ugdr::gpu::validate_persistent_copy_config(config) !=
+        EINVAL) {
+        return false;
+    }
+    config.copy_warps = 2;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
+        return false;
+    }
+    config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
+    config.copy_warps = 4;
 
     ugdr::gpu::PersistentCopyLifecycle lifecycle;
     if (lifecycle.start(config) != 0 ||
@@ -892,9 +906,10 @@ int warp_specialized_queue_smoke(
         queue.device_batch() != device_batch ||
         queue.shared_queue_depth() != shared_queue_depth ||
         queue.host_meta_bytes() != 64 + capacity * 48 ||
-        queue.dynamic_shared_memory_bytes() !=
-            64 + shared_queue_depth * 80 *
-                     (use_pipeline ? copy_warps : 1) ||
+        queue.shared_memory_bytes() !=
+            shared_queue_depth * 80 *
+                    (use_pipeline ? copy_warps : 1) +
+                (use_pipeline ? 0 : 64) ||
         queue.host_system_atomic_operations() != 0 ||
         (use_pipeline ? queue.start_pipeline()
                       : queue.start()) != 0 ||
@@ -1104,7 +1119,9 @@ int main() {
         if (status != 0) {
             return status;
         }
-        if (test_case.shared_queue_depth <= 16) {
+        if (test_case.shared_queue_depth <= 16 &&
+            test_case.copy_warps >= 2 &&
+            (test_case.copy_warps - 2) % 4 == 0) {
             const int pipeline_status =
                 warp_specialized_queue_smoke(
                     test_case.copy_warps,
