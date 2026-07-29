@@ -13,6 +13,14 @@
 
 namespace {
 
+bool kernel_resources_match(
+    const ugdr::gpu::KernelResourceUsage &resources,
+    std::size_t shared_memory_bytes) {
+    return resources.shared_memory_bytes == shared_memory_bytes &&
+           resources.registers_per_thread != 0 && resources.occupancy > 0.0 &&
+           resources.occupancy <= 1.0;
+}
+
 bool common_contract_smoke() {
     constexpr ugdr::gpu::PersistentCopyModel models[]{
         ugdr::gpu::PersistentCopyModel::direct_atomic,
@@ -382,7 +390,8 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
         queue.capacity() != capacity || queue.copy_warps() != 4 ||
         queue.device_batch() != device_batch ||
         queue.host_meta_bytes() != 64 + capacity * 64 || queue.start() != 0 ||
-        !queue.running() || !queue.accepting()) {
+        !queue.running() || !queue.accepting() ||
+        !kernel_resources_match(queue.kernel_resources(), 0)) {
         return 31;
     }
     ugdr::gpu::CopyCompletion completion;
@@ -525,7 +534,8 @@ int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
         queue.device_batch() != device_batch ||
         queue.host_meta_bytes() != copy_warps * 64 + capacity * 48 ||
         queue.host_system_atomic_operations() != 0 || queue.start() != 0 ||
-        !queue.running() || !queue.accepting()) {
+        !queue.running() || !queue.accepting() ||
+        !kernel_resources_match(queue.kernel_resources(), 0)) {
         return 44;
     }
 
@@ -678,7 +688,8 @@ int static_partition_spsc_queue_smoke(std::uint32_t copy_warps,
         queue.device_batch() != device_batch ||
         queue.host_meta_bytes() != 64 + capacity * 64 ||
         queue.host_system_atomic_operations() != 0 || queue.start() != 0 ||
-        !queue.running() || !queue.accepting()) {
+        !queue.running() || !queue.accepting() ||
+        !kernel_resources_match(queue.kernel_resources(), 0)) {
         return 57;
     }
 
@@ -920,7 +931,9 @@ int warp_specialized_queue_smoke(
         (use_pipeline ? queue.start_pipeline()
                       : queue.start()) != 0 ||
         !queue.running() ||
-        !queue.accepting()) {
+        !queue.accepting() ||
+        !kernel_resources_match(queue.kernel_resources(),
+                                queue.shared_memory_bytes())) {
         return 79;
     }
 

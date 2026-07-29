@@ -111,6 +111,12 @@ struct PersistentCopyResult {
     bool measurement_valid = false;
 };
 
+struct KernelResourceUsage {
+    std::size_t shared_memory_bytes = 0;
+    std::uint32_t registers_per_thread = 0;
+    double occupancy = 0.0;
+};
+
 class MappedPinnedMemory {
   public:
     MappedPinnedMemory() noexcept = default;
@@ -205,6 +211,7 @@ class DirectAtomicQueue {
     [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
     [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
     [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
+    [[nodiscard]] const KernelResourceUsage &kernel_resources() const noexcept;
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] bool accepting() const noexcept;
     [[nodiscard]] bool drained() const noexcept;
@@ -220,6 +227,7 @@ class DirectAtomicQueue {
     std::uint64_t submit_tail_ = 0;
     std::uint64_t completion_head_ = 0;
     std::uint64_t completed_device_batches_ = 0;
+    KernelResourceUsage kernel_resources_{};
     bool running_ = false;
     bool accepting_ = false;
 };
@@ -252,6 +260,7 @@ class DynamicShardedSpscQueue {
     [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
     [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
     [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
+    [[nodiscard]] const KernelResourceUsage &kernel_resources() const noexcept;
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] bool accepting() const noexcept;
     [[nodiscard]] bool drained() const noexcept;
@@ -271,6 +280,7 @@ class DynamicShardedSpscQueue {
     std::uint64_t completion_heads_[32]{};
     std::uint64_t accepted_tasks_ = 0;
     std::uint64_t completed_tasks_ = 0;
+    KernelResourceUsage kernel_resources_{};
     bool running_ = false;
     bool accepting_ = false;
 };
@@ -304,6 +314,7 @@ class StaticPartitionSpscQueue {
     [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
     [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
     [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
+    [[nodiscard]] const KernelResourceUsage &kernel_resources() const noexcept;
     [[nodiscard]] bool head_of_line_blocked() const noexcept;
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] bool accepting() const noexcept;
@@ -320,6 +331,7 @@ class StaticPartitionSpscQueue {
     std::uint64_t stage_buffer_base_ = 0;
     std::uint64_t submit_tail_ = 0;
     std::uint64_t completion_head_ = 0;
+    KernelResourceUsage kernel_resources_{};
     bool running_ = false;
     bool accepting_ = false;
 };
@@ -362,6 +374,7 @@ class WarpSpecializedQueue {
     [[nodiscard]] std::uint64_t accepted_tasks() const noexcept;
     [[nodiscard]] std::uint64_t completed_tasks() const noexcept;
     [[nodiscard]] std::uint64_t host_system_atomic_operations() const noexcept;
+    [[nodiscard]] const KernelResourceUsage &kernel_resources() const noexcept;
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] bool accepting() const noexcept;
     [[nodiscard]] bool drained() const noexcept;
@@ -381,6 +394,7 @@ class WarpSpecializedQueue {
     std::uint64_t submit_tail_ = 0;
     std::uint64_t completion_head_ = 0;
     std::uint64_t cached_completion_tail_ = 0;
+    KernelResourceUsage kernel_resources_{};
     bool running_ = false;
     bool accepting_ = false;
 };
