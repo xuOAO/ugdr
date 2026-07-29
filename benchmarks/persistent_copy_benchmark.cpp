@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -68,6 +69,7 @@ int run_direct_atomic(PersistentCopyConfig config) {
     }
 
     std::uint64_t next_task_id = 1;
+    std::vector<ugdr::gpu::CopyTask> submit_batch(config.host_batch);
     const auto run_tasks = [&](std::uint64_t task_count) {
         std::uint64_t submitted = 0;
         std::uint64_t completed = 0;
@@ -75,21 +77,31 @@ int run_direct_atomic(PersistentCopyConfig config) {
         while (completed != task_count) {
             bool progressed = false;
             while (submitted != task_count) {
-                ugdr::gpu::CopyTask task;
-                if (payload.make_task(next_task_id, payload.target_address(), config.payload_bytes,
-                                      0, &task) != 0) {
-                    return false;
+                const std::size_t remaining =
+                    static_cast<std::size_t>(task_count - submitted);
+                const std::size_t requested =
+                    remaining < submit_batch.size() ? remaining : submit_batch.size();
+                for (std::size_t index = 0; index < requested; ++index) {
+                    if (payload.make_task(next_task_id + index, payload.target_address(),
+                                          config.payload_bytes, 0, &submit_batch[index]) != 0) {
+                        return false;
+                    }
                 }
-                const int submit_status = queue.try_submit(task);
+                std::size_t accepted = 0;
+                const int submit_status =
+                    queue.try_submit_batch(submit_batch.data(), requested, &accepted);
                 if (submit_status == EAGAIN) {
                     break;
                 }
-                if (submit_status != 0) {
+                if (submit_status != 0 || accepted == 0 || accepted > requested) {
                     return false;
                 }
-                ++next_task_id;
-                ++submitted;
+                next_task_id += accepted;
+                submitted += accepted;
                 progressed = true;
+                if (accepted != requested) {
+                    break;
+                }
             }
             ugdr::gpu::CopyCompletion completion;
             while (queue.try_poll(&completion) == 0) {

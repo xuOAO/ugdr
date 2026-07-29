@@ -315,31 +315,50 @@ int direct_atomic_queue_smoke() {
         return 31;
     }
     ugdr::gpu::CopyCompletion completion;
-    if (queue.try_poll(&completion) != EAGAIN) {
+    std::size_t submitted_count = 99;
+    ugdr::gpu::CopyTask invalid_batch[2]{};
+    if (payload.make_task(1, payload.target_address(), payload_bytes, 0, &invalid_batch[0]) != 0) {
+        return 32;
+    }
+    if (queue.try_poll(&completion) != EAGAIN ||
+        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL ||
+        submitted_count != 0 || queue.try_submit_batch(nullptr, 0, nullptr) != EINVAL ||
+        queue.try_submit_batch(invalid_batch, 2, &submitted_count) != EINVAL ||
+        submitted_count != 0 || queue.accepted_tasks() != 0) {
         return 32;
     }
 
     std::vector<bool> seen(total_tasks, false);
+    std::vector<ugdr::gpu::CopyTask> submit_batch(5);
     std::size_t submitted = 0;
     std::size_t completed = 0;
     std::size_t stalled = 0;
     while (completed != total_tasks) {
         bool progressed = false;
         while (submitted != total_tasks) {
-            ugdr::gpu::CopyTask task;
-            if (payload.make_task(submitted + 1, payload.target_address(), payload_bytes, 0,
-                                  &task) != 0) {
-                return 33;
+            const std::size_t remaining = total_tasks - submitted;
+            const std::size_t requested =
+                remaining < submit_batch.size() ? remaining : submit_batch.size();
+            for (std::size_t index = 0; index < requested; ++index) {
+                if (payload.make_task(submitted + index + 1, payload.target_address(),
+                                      payload_bytes, 0, &submit_batch[index]) != 0) {
+                    return 33;
+                }
             }
-            const int status = queue.try_submit(task);
+            submitted_count = 0;
+            const int status =
+                queue.try_submit_batch(submit_batch.data(), requested, &submitted_count);
             if (status == EAGAIN) {
                 break;
             }
-            if (status != 0) {
+            if (status != 0 || submitted_count == 0 || submitted_count > requested) {
                 return 34;
             }
-            ++submitted;
+            submitted += submitted_count;
             progressed = true;
+            if (submitted_count != requested) {
+                break;
+            }
         }
         while (queue.try_poll(&completion) == 0) {
             if (completion.task_id == 0 || completion.task_id > total_tasks ||

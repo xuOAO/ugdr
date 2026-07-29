@@ -859,18 +859,40 @@ int DirectAtomicQueue::start() noexcept {
 }
 
 int DirectAtomicQueue::try_submit(const CopyTask &task) noexcept {
-    if (!running_ || !accepting_ || task.target_address == 0 || task.length == 0) {
+    std::size_t submitted_count = 0;
+    return try_submit_batch(&task, 1, &submitted_count);
+}
+
+int DirectAtomicQueue::try_submit_batch(const CopyTask *tasks, std::size_t task_count,
+                                        std::size_t *submitted_count) noexcept {
+    if (submitted_count != nullptr) {
+        *submitted_count = 0;
+    }
+    if (!running_ || !accepting_ || tasks == nullptr || task_count == 0 ||
+        submitted_count == nullptr) {
         return EINVAL;
     }
-    if (submit_tail_ - completion_head_ >= capacity_) {
+    const std::size_t outstanding =
+        static_cast<std::size_t>(submit_tail_ - completion_head_);
+    if (outstanding >= capacity_) {
         return EAGAIN;
     }
+    const std::size_t available = capacity_ - outstanding;
+    const std::size_t count = task_count < available ? task_count : available;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (tasks[index].target_address == 0 || tasks[index].length == 0) {
+            return EINVAL;
+        }
+    }
+
     auto *const control = direct_atomic_control(memory_.host_data());
-    auto *const slot =
-        &direct_atomic_task_slots(memory_.host_data())[submit_tail_ % capacity_];
-    slot->task = task;
-    ++submit_tail_;
+    auto *const slots = direct_atomic_task_slots(memory_.host_data());
+    for (std::size_t index = 0; index < count; ++index) {
+        slots[(submit_tail_ + index) % capacity_].task = tasks[index];
+    }
+    submit_tail_ += count;
     host_store_release(&control->task_tail, submit_tail_);
+    *submitted_count = count;
     return 0;
 }
 

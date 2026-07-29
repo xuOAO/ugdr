@@ -186,6 +186,8 @@ class DirectAtomicQueue {
                         std::uint64_t stage_buffer_base, DirectAtomicQueue *queue) noexcept;
     int start() noexcept;
     int try_submit(const CopyTask &task) noexcept;
+    int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
+                         std::size_t *submitted_count) noexcept;
     int try_poll(CopyCompletion *completion) noexcept;
     int request_stop() noexcept;
     int wait() noexcept;
