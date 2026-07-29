@@ -47,6 +47,15 @@ bool common_contract_smoke() {
     if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
         return false;
     }
+    config.shared_stage_count = 3;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
+    config.shared_stage_count = 2;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
+    config.shared_stage_count = 8;
     config.payload_bytes = ugdr::gpu::kPersistentCopyMaxPayloadBytes + 1;
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
@@ -829,6 +838,178 @@ int static_partition_head_of_line_smoke() {
     return 0;
 }
 
+int warp_specialized_queue_smoke(
+    std::uint32_t copy_warps, std::uint32_t device_batch,
+    std::uint32_t shared_stage_count) {
+    constexpr std::size_t payload_bytes = 8192;
+    constexpr std::size_t capacity = 32;
+    constexpr std::uint64_t seed =
+        UINT64_C(0xa11ce5a6e5a11ce5);
+    constexpr std::size_t total_tasks = 257;
+
+    ugdr::gpu::PersistentCopyPayloadBuffer payload;
+    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(
+            payload_bytes, 16, &payload) != 0 ||
+        payload.prepare(seed) != 0) {
+        return 78;
+    }
+    ugdr::gpu::WarpSpecializedQueue queue;
+    if (ugdr::gpu::WarpSpecializedQueue::allocate(
+            3, 4, 4, 8, payload.stage_buffer_base(),
+            &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(
+            capacity, 31, 4, 8,
+            payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(
+            capacity, 4, 3, 8,
+            payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(
+            capacity, 4, 4, 3,
+            payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(
+            capacity, 4, 1, 1,
+            payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(
+            capacity, 4, 8, 4,
+            payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(
+            capacity, copy_warps, device_batch,
+            shared_stage_count, payload.stage_buffer_base(),
+            &queue) != 0 ||
+        queue.capacity() != capacity ||
+        queue.copy_warps() != copy_warps ||
+        queue.device_batch() != device_batch ||
+        queue.shared_stage_count() != shared_stage_count ||
+        queue.host_meta_bytes() != 64 + capacity * 48 ||
+        queue.dynamic_shared_memory_bytes() !=
+            64 + shared_stage_count * 80 ||
+        queue.host_system_atomic_operations() != 0 ||
+        queue.start() != 0 || !queue.running() ||
+        !queue.accepting()) {
+        return 79;
+    }
+
+    ugdr::gpu::CopyCompletion completion;
+    std::size_t submitted_count = 99;
+    ugdr::gpu::CopyTask invalid_batch[2]{};
+    if (payload.make_task(
+            1, payload.target_address(), payload_bytes, 0,
+            &invalid_batch[0]) != 0 ||
+        queue.try_poll(&completion) != EAGAIN ||
+        queue.try_submit_batch(
+            nullptr, 1, &submitted_count) != EINVAL ||
+        submitted_count != 0 ||
+        queue.try_submit_batch(nullptr, 0, nullptr) !=
+            EINVAL ||
+        queue.try_submit_batch(
+            invalid_batch, 2, &submitted_count) != EINVAL ||
+        submitted_count != 0 ||
+        queue.accepted_tasks() != 0) {
+        return 80;
+    }
+
+    std::vector<ugdr::gpu::CopyTask> submit_batch(7);
+    std::size_t submitted = 0;
+    std::size_t completed = 0;
+    std::size_t stalled = 0;
+    while (completed != total_tasks) {
+        bool progressed = false;
+        while (submitted != total_tasks) {
+            const std::size_t remaining =
+                total_tasks - submitted;
+            const std::size_t requested =
+                remaining < submit_batch.size()
+                    ? remaining
+                    : submit_batch.size();
+            for (std::size_t index = 0;
+                 index < requested; ++index) {
+                if (payload.make_task(
+                        submitted + index + 1,
+                        payload.target_address(), payload_bytes,
+                        0, &submit_batch[index]) != 0) {
+                    return 81;
+                }
+            }
+            submitted_count = 0;
+            const int status = queue.try_submit_batch(
+                submit_batch.data(), requested,
+                &submitted_count);
+            if (status == EAGAIN) {
+                break;
+            }
+            if (status != 0 || submitted_count == 0 ||
+                submitted_count > requested) {
+                return 82;
+            }
+            submitted += submitted_count;
+            progressed = true;
+            if (submitted_count != requested) {
+                break;
+            }
+        }
+        while (queue.try_poll(&completion) == 0) {
+            if (completion.task_id != completed + 1 ||
+                completion.result !=
+                    ugdr::gpu::CopyTaskResult::success) {
+                return 83;
+            }
+            ++completed;
+            progressed = true;
+        }
+        stalled = progressed ? 0 : stalled + 1;
+        if (stalled > 10000000) {
+            return 84;
+        }
+    }
+
+    ugdr::gpu::PayloadCheck check;
+    if (!queue.drained() ||
+        queue.accepted_tasks() != total_tasks ||
+        queue.completed_tasks() != total_tasks ||
+        queue.request_stop() != 0 ||
+        queue.wait() != 0 || queue.running() ||
+        queue.wait() != EINVAL ||
+        payload.verify(seed, &check) != 0 ||
+        !check.payload_matches || !check.guards_intact) {
+        return 85;
+    }
+
+    if (queue.start() != 0) {
+        return 86;
+    }
+    for (std::size_t index = 0; index < capacity; ++index) {
+        ugdr::gpu::CopyTask task;
+        if (payload.make_task(
+                1000 + index, payload.target_address(),
+                payload_bytes, 0, &task) != 0 ||
+            queue.try_submit(task) != 0) {
+            return 87;
+        }
+    }
+    ugdr::gpu::CopyTask overflow_task;
+    if (payload.make_task(
+            2000, payload.target_address(), payload_bytes,
+            0, &overflow_task) != 0 ||
+        queue.try_submit(overflow_task) != EAGAIN ||
+        queue.request_stop() != 0 || queue.wait() != 0 ||
+        queue.drained()) {
+        return 88;
+    }
+    for (std::size_t index = 0; index < capacity; ++index) {
+        if (queue.try_poll(&completion) != 0 ||
+            completion.task_id != 1000 + index ||
+            completion.result !=
+                ugdr::gpu::CopyTaskResult::success) {
+            return 89;
+        }
+    }
+    if (!queue.drained() || queue.reset() != 0 ||
+        !queue.empty()) {
+        return 90;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -878,5 +1059,29 @@ int main() {
             return status;
         }
     }
-    return static_partition_head_of_line_smoke();
+    const int head_of_line_status =
+        static_partition_head_of_line_smoke();
+    if (head_of_line_status != 0) {
+        return head_of_line_status;
+    }
+    struct WarpSpecializedCase {
+        std::uint32_t copy_warps;
+        std::uint32_t device_batch;
+        std::uint32_t shared_stage_count;
+    };
+    constexpr WarpSpecializedCase warp_specialized_cases[]{
+        {1, 1, 2},
+        {4, 4, 8},
+        {16, 8, 32},
+        {30, 32, 32},
+    };
+    for (const auto &test_case : warp_specialized_cases) {
+        const int status = warp_specialized_queue_smoke(
+            test_case.copy_warps, test_case.device_batch,
+            test_case.shared_stage_count);
+        if (status != 0) {
+            return status;
+        }
+    }
+    return 0;
 }

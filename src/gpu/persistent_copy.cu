@@ -288,6 +288,36 @@ struct alignas(32) StaticPartitionSpscCompletionSlot {
     std::uint64_t sequence;
 };
 
+struct alignas(64) WarpSpecializedControl {
+    std::uint64_t task_tail;
+    std::uint64_t completion_tail;
+    std::uint64_t stop_requested;
+};
+
+struct alignas(32) WarpSpecializedTaskSlot {
+    CopyTask task;
+};
+
+struct alignas(16) WarpSpecializedCompletionSlot {
+    CopyCompletion completion;
+};
+
+struct alignas(64) WarpSpecializedSharedControl {
+    std::uint64_t task_publish;
+    std::uint64_t task_claim;
+    std::uint64_t ingress_done;
+};
+
+struct alignas(16) WarpSpecializedSharedTaskSlot {
+    CopyTask task;
+    std::uint64_t sequence;
+};
+
+struct alignas(16) WarpSpecializedSharedCompletionSlot {
+    CopyCompletion completion;
+    std::uint64_t sequence;
+};
+
 static_assert(sizeof(DirectAtomicControl) == 64);
 static_assert(sizeof(DirectAtomicTaskSlot) == 32);
 static_assert(sizeof(DirectAtomicCompletionSlot) == 32);
@@ -297,6 +327,12 @@ static_assert(sizeof(DynamicShardedSpscCompletionSlot) == 16);
 static_assert(sizeof(StaticPartitionSpscControl) == 64);
 static_assert(sizeof(StaticPartitionSpscTaskSlot) == 32);
 static_assert(sizeof(StaticPartitionSpscCompletionSlot) == 32);
+static_assert(sizeof(WarpSpecializedControl) == 64);
+static_assert(sizeof(WarpSpecializedTaskSlot) == 32);
+static_assert(sizeof(WarpSpecializedCompletionSlot) == 16);
+static_assert(sizeof(WarpSpecializedSharedControl) == 64);
+static_assert(sizeof(WarpSpecializedSharedTaskSlot) == 48);
+static_assert(sizeof(WarpSpecializedSharedCompletionSlot) == 32);
 
 __device__ __forceinline__ std::uint64_t system_load_acquire(
     const std::uint64_t *address) noexcept {
@@ -335,6 +371,25 @@ __device__ __forceinline__ std::uint64_t system_atomic_add(std::uint64_t *addres
                  : "l"(address), "l"(value)
                  : "memory");
     return previous;
+}
+
+__device__ __forceinline__ std::uint64_t shared_atomic_load(
+    std::uint64_t *address) noexcept {
+    return atomicAdd(reinterpret_cast<unsigned long long *>(address), 0ULL);
+}
+
+__device__ __forceinline__ void shared_atomic_store(
+    std::uint64_t *address, std::uint64_t value) noexcept {
+    (void)atomicExch(reinterpret_cast<unsigned long long *>(address),
+                     static_cast<unsigned long long>(value));
+}
+
+__device__ __forceinline__ bool shared_atomic_claim(
+    std::uint64_t *address, std::uint64_t expected) noexcept {
+    return atomicCAS(reinterpret_cast<unsigned long long *>(address),
+                     static_cast<unsigned long long>(expected),
+                     static_cast<unsigned long long>(expected + 1)) ==
+           expected;
 }
 
 template <std::uint32_t TasksPerClaim>
@@ -598,6 +653,279 @@ __global__ void static_partition_spsc_kernel(
     }
 }
 
+template <std::uint32_t TasksPerBatch>
+__global__ void warp_specialized_kernel(
+    WarpSpecializedControl *control,
+    WarpSpecializedTaskSlot *external_task_slots,
+    WarpSpecializedCompletionSlot *external_completion_slots,
+    std::uint64_t capacity_mask, std::uint32_t copy_warps,
+    std::uint64_t shared_stage_mask, std::uint64_t stage_buffer_base) {
+    static_assert(TasksPerBatch > 0);
+    static_assert(TasksPerBatch <= 32);
+    extern __shared__ __align__(64) std::uint8_t shared_memory[];
+    auto *const shared_control =
+        reinterpret_cast<WarpSpecializedSharedControl *>(shared_memory);
+    auto *const shared_task_slots =
+        reinterpret_cast<WarpSpecializedSharedTaskSlot *>(
+            shared_control + 1);
+    const std::uint64_t shared_stage_count = shared_stage_mask + 1;
+    auto *const shared_completion_slots =
+        reinterpret_cast<WarpSpecializedSharedCompletionSlot *>(
+            shared_task_slots + shared_stage_count);
+
+    constexpr unsigned kFullWarp = 0xffffffffU;
+    constexpr std::uint64_t kNoTask = UINT64_MAX;
+    const std::uint32_t lane = threadIdx.x & 31U;
+    const std::uint32_t warp = threadIdx.x >> 5U;
+    for (std::uint64_t index = threadIdx.x;
+         index < shared_stage_count; index += blockDim.x) {
+        shared_task_slots[index].sequence = index;
+        shared_completion_slots[index].sequence = index;
+    }
+    if (threadIdx.x == 0) {
+        shared_control->task_publish = 0;
+        shared_control->task_claim = 0;
+        shared_control->ingress_done = 0;
+    }
+    __syncthreads();
+
+    if (warp == 0) {
+        std::uint64_t task_head = 0;
+        while (true) {
+            std::uint32_t task_count = 0;
+            bool should_stop = false;
+            if (lane == 0) {
+                std::uint64_t task_tail =
+                    system_load_acquire(&control->task_tail);
+                if (task_head < task_tail) {
+                    const std::uint64_t available =
+                        task_tail - task_head;
+                    task_count = static_cast<std::uint32_t>(
+                        available < TasksPerBatch
+                            ? available
+                            : TasksPerBatch);
+                } else if (
+                    system_load_acquire(&control->stop_requested) != 0) {
+                    task_tail =
+                        system_load_acquire(&control->task_tail);
+                    should_stop = task_head >= task_tail;
+                }
+            }
+            task_count =
+                __shfl_sync(kFullWarp, task_count, 0);
+            should_stop =
+                __shfl_sync(kFullWarp, should_stop, 0);
+            if (should_stop) {
+                if (lane == 0) {
+                    shared_atomic_store(
+                        &shared_control->ingress_done, 1);
+                }
+                return;
+            }
+            if (task_count == 0) {
+                if (lane == 0) {
+                    __nanosleep(64);
+                }
+                continue;
+            }
+
+            if (lane == 0) {
+                for (std::uint32_t index = 0;
+                     index < task_count; ++index) {
+                    const std::uint64_t task_index =
+                        task_head + index;
+                    auto *const shared_slot =
+                        &shared_task_slots[
+                            task_index &
+                            shared_stage_mask];
+                    while (shared_atomic_load(
+                               &shared_slot->sequence) !=
+                           task_index) {
+                        __nanosleep(64);
+                    }
+                    shared_slot->task =
+                        external_task_slots[
+                            task_index & capacity_mask].task;
+                    __threadfence_block();
+                    shared_atomic_store(
+                        &shared_slot->sequence,
+                        task_index + 1);
+                }
+                task_head += task_count;
+                shared_atomic_store(
+                    &shared_control->task_publish, task_head);
+            }
+        }
+    }
+
+    if (warp <= copy_warps) {
+        while (true) {
+            std::uint64_t task_index = kNoTask;
+            bool should_stop = false;
+            if (lane == 0) {
+                const std::uint64_t task_claim =
+                    shared_atomic_load(
+                        &shared_control->task_claim);
+                const std::uint64_t task_publish =
+                    shared_atomic_load(
+                        &shared_control->task_publish);
+                if (task_claim < task_publish) {
+                    if (shared_atomic_claim(
+                            &shared_control->task_claim,
+                            task_claim)) {
+                        task_index = task_claim;
+                    }
+                } else if (
+                    shared_atomic_load(
+                        &shared_control->ingress_done) != 0) {
+                    should_stop = task_claim >= task_publish;
+                }
+            }
+            task_index =
+                __shfl_sync(kFullWarp, task_index, 0);
+            should_stop =
+                __shfl_sync(kFullWarp, should_stop, 0);
+            if (should_stop) {
+                return;
+            }
+            if (task_index == kNoTask) {
+                if (lane == 0) {
+                    __nanosleep(64);
+                }
+                continue;
+            }
+
+            WarpSpecializedSharedTaskSlot *const task_slot =
+                &shared_task_slots[
+                    task_index & shared_stage_mask];
+            CopyTask task{};
+            if (lane == 0) {
+                while (shared_atomic_load(
+                           &task_slot->sequence) != task_index + 1) {
+                    __nanosleep(64);
+                }
+                task = task_slot->task;
+            }
+            task.target_address = __shfl_sync(
+                kFullWarp, task.target_address, 0);
+            task.length =
+                __shfl_sync(kFullWarp, task.length, 0);
+            task.relative_offset = __shfl_sync(
+                kFullWarp, task.relative_offset, 0);
+            const auto *const source =
+                reinterpret_cast<const std::uint8_t *>(
+                    static_cast<std::uintptr_t>(
+                        stage_buffer_base +
+                        task.relative_offset));
+            auto *const target =
+                reinterpret_cast<std::uint8_t *>(
+                    static_cast<std::uintptr_t>(
+                        task.target_address));
+            copy_cg_warp(source, target, task.length);
+            __syncwarp();
+
+            if (lane == 0) {
+                shared_atomic_store(
+                    &task_slot->sequence,
+                    task_index + shared_stage_count);
+                WarpSpecializedSharedCompletionSlot *const
+                    completion_slot =
+                        &shared_completion_slots[
+                            task_index & shared_stage_mask];
+                while (shared_atomic_load(
+                           &completion_slot->sequence) !=
+                       task_index) {
+                    __nanosleep(64);
+                }
+                completion_slot->completion.task_id =
+                    task.task_id;
+                completion_slot->completion.result =
+                    CopyTaskResult::success;
+                __threadfence_block();
+                shared_atomic_store(
+                    &completion_slot->sequence,
+                    task_index + 1);
+            }
+        }
+    }
+
+    std::uint64_t completion_head = 0;
+    while (true) {
+        std::uint32_t completion_count = 0;
+        bool should_stop = false;
+        if (lane == 0) {
+            const std::uint64_t task_publish =
+                shared_atomic_load(
+                    &shared_control->task_publish);
+            const std::uint64_t available =
+                task_publish - completion_head;
+            const std::uint32_t limit =
+                static_cast<std::uint32_t>(
+                    available < TasksPerBatch
+                        ? available
+                        : TasksPerBatch);
+            while (completion_count < limit) {
+                const std::uint64_t completion_index =
+                    completion_head + completion_count;
+                auto *const completion_slot =
+                    &shared_completion_slots[
+                        completion_index & shared_stage_mask];
+                if (shared_atomic_load(
+                        &completion_slot->sequence) !=
+                    completion_index + 1) {
+                    break;
+                }
+                ++completion_count;
+            }
+            should_stop =
+                shared_atomic_load(
+                    &shared_control->ingress_done) != 0 &&
+                completion_head >= task_publish;
+        }
+        completion_count =
+            __shfl_sync(kFullWarp, completion_count, 0);
+        should_stop =
+            __shfl_sync(kFullWarp, should_stop, 0);
+        if (should_stop) {
+            return;
+        }
+        if (completion_count == 0) {
+            if (lane == 0) {
+                __nanosleep(64);
+            }
+            continue;
+        }
+
+        if (lane < completion_count) {
+            const std::uint64_t completion_index =
+                completion_head + lane;
+            external_completion_slots[
+                completion_index & capacity_mask].completion =
+                shared_completion_slots[
+                    completion_index &
+                    shared_stage_mask].completion;
+        }
+        __syncwarp();
+        if (lane == 0) {
+            system_store_release(
+                &control->completion_tail,
+                completion_head + completion_count);
+            for (std::uint32_t index = 0;
+                 index < completion_count; ++index) {
+                const std::uint64_t completion_index =
+                    completion_head + index;
+                shared_atomic_store(
+                    &shared_completion_slots[
+                        completion_index &
+                        shared_stage_mask].sequence,
+                    completion_index +
+                        shared_stage_count);
+            }
+        }
+        completion_head += completion_count;
+    }
+}
+
 int cuda_status(cudaError_t status) noexcept {
     switch (status) {
     case cudaSuccess:
@@ -718,6 +1046,40 @@ bool static_partition_spsc_allocation_size(std::size_t capacity,
     return true;
 }
 
+bool warp_specialized_allocation_size(
+    std::size_t capacity, std::uint32_t copy_warps,
+    std::uint32_t device_batch, std::uint32_t shared_stage_count,
+    std::size_t *host_bytes, std::size_t *shared_bytes) noexcept {
+    constexpr std::size_t kPerHostSlotBytes =
+        sizeof(WarpSpecializedTaskSlot) +
+        sizeof(WarpSpecializedCompletionSlot);
+    constexpr std::size_t kPerSharedSlotBytes =
+        sizeof(WarpSpecializedSharedTaskSlot) +
+        sizeof(WarpSpecializedSharedCompletionSlot);
+    if (copy_warps == 0 || copy_warps > 30 ||
+        !is_supported_device_batch(device_batch) ||
+        !is_power_of_two(capacity) ||
+        shared_stage_count < 2 ||
+        !is_power_of_two(shared_stage_count) ||
+        device_batch > shared_stage_count ||
+        capacity >
+            (std::numeric_limits<std::size_t>::max() -
+             sizeof(WarpSpecializedControl)) /
+                kPerHostSlotBytes ||
+        shared_stage_count >
+            (std::numeric_limits<std::size_t>::max() -
+             sizeof(WarpSpecializedSharedControl)) /
+                kPerSharedSlotBytes) {
+        return false;
+    }
+    *host_bytes = sizeof(WarpSpecializedControl) +
+                  capacity * kPerHostSlotBytes;
+    *shared_bytes = sizeof(WarpSpecializedSharedControl) +
+                    static_cast<std::size_t>(shared_stage_count) *
+                        kPerSharedSlotBytes;
+    return true;
+}
+
 DirectAtomicControl *direct_atomic_control(void *memory) noexcept {
     return static_cast<DirectAtomicControl *>(memory);
 }
@@ -774,6 +1136,23 @@ static_partition_spsc_completion_slots(const void *memory,
         reinterpret_cast<const StaticPartitionSpscTaskSlot *>(control + 1);
     return reinterpret_cast<const StaticPartitionSpscCompletionSlot *>(
         task_slots + capacity);
+}
+
+WarpSpecializedControl *warp_specialized_control(
+    void *memory) noexcept {
+    return static_cast<WarpSpecializedControl *>(memory);
+}
+
+WarpSpecializedTaskSlot *warp_specialized_task_slots(
+    void *memory) noexcept {
+    return reinterpret_cast<WarpSpecializedTaskSlot *>(
+        warp_specialized_control(memory) + 1);
+}
+
+WarpSpecializedCompletionSlot *warp_specialized_completion_slots(
+    void *memory, std::size_t capacity) noexcept {
+    return reinterpret_cast<WarpSpecializedCompletionSlot *>(
+        warp_specialized_task_slots(memory) + capacity);
 }
 
 std::uint64_t host_load_acquire(const std::uint64_t *address) noexcept {
@@ -852,9 +1231,15 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
             return EINVAL;
         }
     }
-    if (config.model == PersistentCopyModel::warp_specialized &&
-        (config.copy_warps > 30 || config.shared_stage_count == 0)) {
-        return EINVAL;
+    if (config.model == PersistentCopyModel::warp_specialized) {
+        std::size_t host_bytes = 0;
+        std::size_t shared_bytes = 0;
+        if (!warp_specialized_allocation_size(
+                config.outstanding_capacity, config.copy_warps,
+                config.device_batch, config.shared_stage_count,
+                &host_bytes, &shared_bytes)) {
+            return EINVAL;
+        }
     }
     return 0;
 }
@@ -1973,6 +2358,298 @@ bool StaticPartitionSpscQueue::drained() const noexcept {
 }
 
 bool StaticPartitionSpscQueue::empty() const noexcept {
+    return memory_.empty();
+}
+
+WarpSpecializedQueue::~WarpSpecializedQueue() {
+    if (running_) {
+        (void)request_stop();
+        (void)wait();
+    }
+    (void)reset();
+}
+
+int WarpSpecializedQueue::allocate(
+    std::size_t capacity, std::uint32_t copy_warps,
+    std::uint32_t device_batch,
+    std::uint32_t shared_stage_count,
+    std::uint64_t stage_buffer_base,
+    WarpSpecializedQueue *queue) noexcept {
+    std::size_t host_bytes = 0;
+    std::size_t shared_bytes = 0;
+    if (queue == nullptr || !queue->empty() ||
+        stage_buffer_base == 0 ||
+        !warp_specialized_allocation_size(
+            capacity, copy_warps, device_batch,
+            shared_stage_count, &host_bytes, &shared_bytes)) {
+        return EINVAL;
+    }
+    const int status =
+        MappedPinnedMemory::allocate(host_bytes, &queue->memory_);
+    if (status != 0) {
+        return status;
+    }
+    queue->capacity_ = capacity;
+    queue->capacity_mask_ = capacity - 1;
+    queue->dynamic_shared_memory_bytes_ = shared_bytes;
+    queue->copy_warps_ = copy_warps;
+    queue->device_batch_ = device_batch;
+    queue->shared_stage_count_ = shared_stage_count;
+    queue->stage_buffer_base_ = stage_buffer_base;
+    return 0;
+}
+
+int WarpSpecializedQueue::start() noexcept {
+    if (empty() || running_) {
+        return EINVAL;
+    }
+    std::memset(memory_.host_data(), 0, memory_.size());
+    submit_tail_ = 0;
+    completion_head_ = 0;
+    cached_completion_tail_ = 0;
+    accepting_ = true;
+    running_ = true;
+
+    const std::uintptr_t device_base =
+        static_cast<std::uintptr_t>(memory_.device_address());
+    auto *const control_device =
+        reinterpret_cast<WarpSpecializedControl *>(device_base);
+    auto *const task_slots_device =
+        reinterpret_cast<WarpSpecializedTaskSlot *>(
+            device_base + sizeof(WarpSpecializedControl));
+    auto *const completion_slots_device =
+        reinterpret_cast<WarpSpecializedCompletionSlot *>(
+            device_base + sizeof(WarpSpecializedControl) +
+            capacity_ * sizeof(WarpSpecializedTaskSlot));
+    const std::uint32_t thread_count =
+        (copy_warps_ + 2) * 32;
+    const std::uint64_t shared_stage_mask =
+        shared_stage_count_ - 1;
+    switch (device_batch_) {
+    case 1:
+        warp_specialized_kernel<1>
+            <<<1, thread_count, dynamic_shared_memory_bytes_>>>(
+                control_device, task_slots_device,
+                completion_slots_device, capacity_mask_,
+                copy_warps_, shared_stage_mask,
+                stage_buffer_base_);
+        break;
+    case 2:
+        warp_specialized_kernel<2>
+            <<<1, thread_count, dynamic_shared_memory_bytes_>>>(
+                control_device, task_slots_device,
+                completion_slots_device, capacity_mask_,
+                copy_warps_, shared_stage_mask,
+                stage_buffer_base_);
+        break;
+    case 4:
+        warp_specialized_kernel<4>
+            <<<1, thread_count, dynamic_shared_memory_bytes_>>>(
+                control_device, task_slots_device,
+                completion_slots_device, capacity_mask_,
+                copy_warps_, shared_stage_mask,
+                stage_buffer_base_);
+        break;
+    case 8:
+        warp_specialized_kernel<8>
+            <<<1, thread_count, dynamic_shared_memory_bytes_>>>(
+                control_device, task_slots_device,
+                completion_slots_device, capacity_mask_,
+                copy_warps_, shared_stage_mask,
+                stage_buffer_base_);
+        break;
+    case 16:
+        warp_specialized_kernel<16>
+            <<<1, thread_count, dynamic_shared_memory_bytes_>>>(
+                control_device, task_slots_device,
+                completion_slots_device, capacity_mask_,
+                copy_warps_, shared_stage_mask,
+                stage_buffer_base_);
+        break;
+    case 32:
+        warp_specialized_kernel<32>
+            <<<1, thread_count, dynamic_shared_memory_bytes_>>>(
+                control_device, task_slots_device,
+                completion_slots_device, capacity_mask_,
+                copy_warps_, shared_stage_mask,
+                stage_buffer_base_);
+        break;
+    default:
+        running_ = false;
+        accepting_ = false;
+        return EINVAL;
+    }
+    const int status = cuda_status(cudaGetLastError());
+    if (status != 0) {
+        running_ = false;
+        accepting_ = false;
+    }
+    return status;
+}
+
+int WarpSpecializedQueue::try_submit(
+    const CopyTask &task) noexcept {
+    std::size_t submitted_count = 0;
+    return try_submit_batch(&task, 1, &submitted_count);
+}
+
+int WarpSpecializedQueue::try_submit_batch(
+    const CopyTask *tasks, std::size_t task_count,
+    std::size_t *submitted_count) noexcept {
+    if (submitted_count != nullptr) {
+        *submitted_count = 0;
+    }
+    if (!running_ || !accepting_ || tasks == nullptr ||
+        task_count == 0 || submitted_count == nullptr) {
+        return EINVAL;
+    }
+    const std::size_t outstanding =
+        static_cast<std::size_t>(
+            submit_tail_ - completion_head_);
+    if (outstanding >= capacity_) {
+        return EAGAIN;
+    }
+    const std::size_t available = capacity_ - outstanding;
+    const std::size_t count =
+        task_count < available ? task_count : available;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (tasks[index].target_address == 0 ||
+            tasks[index].length == 0) {
+            return EINVAL;
+        }
+    }
+
+    auto *const control =
+        warp_specialized_control(memory_.host_data());
+    auto *const slots =
+        warp_specialized_task_slots(memory_.host_data());
+    for (std::size_t index = 0; index < count; ++index) {
+        const std::uint64_t task_index = submit_tail_ + index;
+        slots[task_index & capacity_mask_].task = tasks[index];
+    }
+    submit_tail_ += count;
+    host_store_release(&control->task_tail, submit_tail_);
+    *submitted_count = count;
+    return 0;
+}
+
+int WarpSpecializedQueue::try_poll(
+    CopyCompletion *completion) noexcept {
+    if (completion == nullptr || empty()) {
+        return EINVAL;
+    }
+    auto *const control =
+        warp_specialized_control(memory_.host_data());
+    if (completion_head_ >= cached_completion_tail_) {
+        cached_completion_tail_ =
+            host_load_acquire(&control->completion_tail);
+        if (completion_head_ >= cached_completion_tail_) {
+            return EAGAIN;
+        }
+    }
+    auto *const slots = warp_specialized_completion_slots(
+        memory_.host_data(), capacity_);
+    *completion =
+        slots[completion_head_ & capacity_mask_].completion;
+    ++completion_head_;
+    return 0;
+}
+
+int WarpSpecializedQueue::request_stop() noexcept {
+    if (!running_ || !accepting_) {
+        return EINVAL;
+    }
+    accepting_ = false;
+    auto *const control =
+        warp_specialized_control(memory_.host_data());
+    host_store_release(&control->stop_requested, 1);
+    return 0;
+}
+
+int WarpSpecializedQueue::wait() noexcept {
+    if (!running_ || accepting_) {
+        return EINVAL;
+    }
+    const int status =
+        cuda_status(cudaDeviceSynchronize());
+    running_ = false;
+    return status;
+}
+
+int WarpSpecializedQueue::reset() noexcept {
+    if (running_) {
+        return EBUSY;
+    }
+    const int status = memory_.reset();
+    capacity_ = 0;
+    capacity_mask_ = 0;
+    dynamic_shared_memory_bytes_ = 0;
+    copy_warps_ = 0;
+    device_batch_ = 0;
+    shared_stage_count_ = 0;
+    stage_buffer_base_ = 0;
+    submit_tail_ = 0;
+    completion_head_ = 0;
+    cached_completion_tail_ = 0;
+    accepting_ = false;
+    return status;
+}
+
+std::size_t WarpSpecializedQueue::capacity() const noexcept {
+    return capacity_;
+}
+
+std::size_t
+WarpSpecializedQueue::host_meta_bytes() const noexcept {
+    return memory_.size();
+}
+
+std::size_t
+WarpSpecializedQueue::dynamic_shared_memory_bytes() const noexcept {
+    return dynamic_shared_memory_bytes_;
+}
+
+std::uint32_t WarpSpecializedQueue::copy_warps() const noexcept {
+    return copy_warps_;
+}
+
+std::uint32_t WarpSpecializedQueue::device_batch() const noexcept {
+    return device_batch_;
+}
+
+std::uint32_t
+WarpSpecializedQueue::shared_stage_count() const noexcept {
+    return shared_stage_count_;
+}
+
+std::uint64_t
+WarpSpecializedQueue::accepted_tasks() const noexcept {
+    return submit_tail_;
+}
+
+std::uint64_t
+WarpSpecializedQueue::completed_tasks() const noexcept {
+    return completion_head_;
+}
+
+std::uint64_t
+WarpSpecializedQueue::host_system_atomic_operations() const noexcept {
+    return 0;
+}
+
+bool WarpSpecializedQueue::running() const noexcept {
+    return running_;
+}
+
+bool WarpSpecializedQueue::accepting() const noexcept {
+    return accepting_;
+}
+
+bool WarpSpecializedQueue::drained() const noexcept {
+    return submit_tail_ == completion_head_;
+}
+
+bool WarpSpecializedQueue::empty() const noexcept {
     return memory_.empty();
 }
 
