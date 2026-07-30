@@ -18,8 +18,8 @@
     },
     {
       "path": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
-      "revision": 29,
-      "body_sha256": "489a448bba09feb06bae4916dc33c0fd862bad0e8f3936b3c46897b2e616f2b5"
+      "revision": 45,
+      "body_sha256": "d9f5a3587f1b52f508b74a0d546cd74eb836507dacad965f43fa97dd3c2bfa59"
     }
   ],
   "routes": [
