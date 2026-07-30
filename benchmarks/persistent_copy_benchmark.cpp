@@ -24,22 +24,27 @@ void print_result(const char *phase, const PersistentCopyResult &result) {
     std::printf("benchmark=persistent_copy schema_version=%u phase=%s build_type=%s model=%s "
                 "payload_bytes=%zu parent_wr_bytes=%zu outstanding_capacity=%zu "
                 "lane_capacity=%zu host_batch=%zu device_batch=%u copy_warps=%u cta_count=%u "
+                "shared_queue_depth=%u "
                 "ring_count=%u host_warp_aware=%u host_meta_bytes=%zu "
                 "host_system_atomic_operations=%llu shared_memory_bytes=%zu "
                 "registers_per_thread=%u occupancy=%.6f accepted_tasks=%llu completed_tasks=%llu "
-                "drained_tasks=%llu copied_bytes=%llu elapsed_seconds=%.9f task_MTask_per_s=%.6f "
+                "drained_tasks=%llu warmup_tasks=%llu iterations=%llu "
+                "copied_bytes=%llu elapsed_seconds=%.9f task_MTask_per_s=%.6f "
                 "copy_GB_per_s=%.6f task_p50_us=%.3f task_p99_us=%.3f host_cpu_percent=%.3f "
                 "correctness_passed=%u measurement_valid=%u\n",
                 result.schema_version, phase, UGDR_BENCHMARK_BUILD_TYPE,
                 ugdr::gpu::persistent_copy_model_name(result.model), result.payload_bytes,
                 result.parent_wr_bytes, result.outstanding_capacity, result.lane_capacity,
                 result.host_batch, result.device_batch, result.copy_warps, result.cta_count,
-                result.ring_count, result.host_warp_aware ? 1U : 0U, result.host_meta_bytes,
+                result.shared_queue_depth, result.ring_count, result.host_warp_aware ? 1U : 0U,
+                result.host_meta_bytes,
                 static_cast<unsigned long long>(result.host_system_atomic_operations),
                 result.shared_memory_bytes, result.registers_per_thread, result.occupancy,
                 static_cast<unsigned long long>(result.accepted_tasks),
                 static_cast<unsigned long long>(result.completed_tasks),
                 static_cast<unsigned long long>(result.drained_tasks),
+                static_cast<unsigned long long>(result.warmup_tasks),
+                static_cast<unsigned long long>(result.iterations),
                 static_cast<unsigned long long>(result.copied_bytes), result.elapsed_seconds,
                 result.task_millions_per_second, result.copy_gigabytes_per_second,
                 result.task_p50_microseconds, result.task_p99_microseconds, result.host_cpu_percent,
@@ -195,6 +200,8 @@ void populate_measurement(const PersistentCopyConfig &config,
     result->accepted_tasks = config.iterations;
     result->completed_tasks = config.iterations;
     result->drained_tasks = config.iterations;
+    result->warmup_tasks = config.warmup_tasks;
+    result->iterations = config.iterations;
     result->copied_bytes = config.iterations * config.payload_bytes;
     result->elapsed_seconds = measurement.elapsed_seconds;
     if (measurement.elapsed_seconds > 0.0) {
@@ -262,6 +269,7 @@ int run_direct_atomic(PersistentCopyConfig config, PersistentCopyResult *output 
     result.host_batch = config.host_batch;
     result.device_batch = config.device_batch;
     result.copy_warps = config.copy_warps;
+    result.shared_queue_depth = 0;
     result.cta_count = 1;
     result.ring_count = 2;
     result.host_warp_aware = false;
@@ -330,6 +338,7 @@ int run_dynamic_sharded_spsc(PersistentCopyConfig config, PersistentCopyResult *
     result.host_batch = config.host_batch;
     result.device_batch = queue.device_batch();
     result.copy_warps = config.copy_warps;
+    result.shared_queue_depth = 0;
     result.cta_count = 1;
     result.ring_count = config.copy_warps * 2;
     result.host_warp_aware = true;
@@ -398,6 +407,7 @@ int run_static_partition_spsc(PersistentCopyConfig config, PersistentCopyResult 
     result.host_batch = config.host_batch;
     result.device_batch = queue.device_batch();
     result.copy_warps = config.copy_warps;
+    result.shared_queue_depth = 0;
     result.cta_count = 1;
     result.ring_count = 2;
     result.host_warp_aware = false;
@@ -468,6 +478,7 @@ int run_warp_specialized(PersistentCopyConfig config, PersistentCopyResult *outp
     result.host_batch = config.host_batch;
     result.device_batch = queue.device_batch();
     result.copy_warps = queue.copy_warps();
+    result.shared_queue_depth = queue.shared_queue_depth();
     result.cta_count = 1;
     result.ring_count = 2;
     result.host_warp_aware = false;
@@ -498,10 +509,14 @@ int dispatch(PersistentCopyConfig config, PersistentCopyResult *output = nullptr
     case PersistentCopyModel::static_partition_spsc:
         return run_static_partition_spsc(config, output);
     case PersistentCopyModel::warp_specialized:
-        config.shared_queue_depth = 32;
+        if (config.shared_queue_depth == 0) {
+            config.shared_queue_depth = 32;
+        }
         return run_warp_specialized(config, output);
     case PersistentCopyModel::warp_specialized_pipeline:
-        config.shared_queue_depth = 16;
+        if (config.shared_queue_depth == 0) {
+            config.shared_queue_depth = 16;
+        }
         return run_warp_specialized(config, output);
     }
     return 2;
@@ -523,14 +538,17 @@ bool matrix_fairness_matches(const PersistentCopyConfig &config, std::uint32_t t
            result.outstanding_capacity == config.outstanding_capacity &&
            result.host_batch == config.host_batch && result.device_batch == config.device_batch &&
            result.copy_warps + specialist_warps == total_warps && result.cta_count == 1 &&
+           result.shared_queue_depth == config.shared_queue_depth &&
            result.accepted_tasks == config.iterations &&
            result.completed_tasks == config.iterations &&
            result.drained_tasks == config.iterations &&
+           result.warmup_tasks == config.warmup_tasks && result.iterations == config.iterations &&
            result.copied_bytes == config.iterations * config.payload_bytes &&
            result.correctness_passed && result.measurement_valid;
 }
 
-int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps) {
+int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps,
+               std::uint32_t warp_queue_depth, std::uint32_t pipeline_queue_depth) {
     if (!is_matrix_total_warps(total_warps) || config.device_batch > 16) {
         return 2;
     }
@@ -551,6 +569,13 @@ int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps) {
                     models[index] == PersistentCopyModel::warp_specialized_pipeline
                 ? total_warps - 2
                 : total_warps;
+        if (models[index] == PersistentCopyModel::warp_specialized) {
+            case_config.shared_queue_depth = warp_queue_depth;
+        } else if (models[index] == PersistentCopyModel::warp_specialized_pipeline) {
+            case_config.shared_queue_depth = pipeline_queue_depth;
+        } else {
+            case_config.shared_queue_depth = 0;
+        }
         const int status = dispatch(case_config, &results[index]);
         if (status != 0) {
             std::fprintf(stderr,
@@ -559,7 +584,7 @@ int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps) {
                          ugdr::gpu::persistent_copy_model_name(models[index]), status);
             return status;
         }
-        if (!matrix_fairness_matches(config, total_warps, results[index])) {
+        if (!matrix_fairness_matches(case_config, total_warps, results[index])) {
             std::fprintf(stderr, "matrix fairness failed: model=%s\n",
                          ugdr::gpu::persistent_copy_model_name(models[index]));
             return 10;
@@ -569,14 +594,15 @@ int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps) {
     std::printf("benchmark=persistent_copy_matrix schema_version=1 "
                 "phase=matrix_config formal_model_count=4 "
                 "variant_count=1 total_cta_warps=%u "
+                "warp_queue_depth=%u pipeline_queue_depth=%u "
                 "payload_bytes=%zu parent_wr_bytes=%zu "
                 "outstanding_capacity=%zu host_batch=%zu "
                 "device_batch=%u warmup_tasks=%llu "
                 "iterations=%llu fairness_passed=1 "
                 "correctness_passed=1\n",
-                total_warps, config.payload_bytes, config.parent_wr_bytes,
-                config.outstanding_capacity, config.host_batch, config.device_batch,
-                static_cast<unsigned long long>(config.warmup_tasks),
+                total_warps, warp_queue_depth, pipeline_queue_depth, config.payload_bytes,
+                config.parent_wr_bytes, config.outstanding_capacity, config.host_batch,
+                config.device_batch, static_cast<unsigned long long>(config.warmup_tasks),
                 static_cast<unsigned long long>(config.iterations));
     for (const auto &result : results) {
         print_result("matrix", result);
@@ -610,22 +636,41 @@ bool parse_size(const char *text, std::size_t *value) {
     return true;
 }
 
+bool parse_u64(const char *text, std::uint64_t *value) {
+    if (text == nullptr || value == nullptr) {
+        return false;
+    }
+    char *end = nullptr;
+    const unsigned long long parsed = std::strtoull(text, &end, 10);
+    if (end == text || *end != '\0') {
+        return false;
+    }
+    *value = static_cast<std::uint64_t>(parsed);
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
-    if (argc > 6) {
+    if (argc > 10) {
         std::fprintf(stderr,
                      "usage: %s [model] [copy_warps] "
-                     "[device_batch]\n"
+                     "[device_batch] [shared_queue_depth] "
+                     "[host_batch] [payload_bytes] "
+                     "[iterations] [warmup_tasks]\n"
                      "       %s matrix [total_cta_warps] "
                      "[device_batch] [host_batch] "
-                     "[payload_bytes]\n",
+                     "[payload_bytes] [iterations] "
+                     "[warmup_tasks] [warp_queue_depth] "
+                     "[pipeline_queue_depth]\n",
                      argv[0], argv[0]);
         return 1;
     }
     PersistentCopyConfig config;
     if (argc >= 2 && std::strcmp(argv[1], "matrix") == 0) {
         std::uint32_t total_warps = 32;
+        std::uint32_t warp_queue_depth = 32;
+        std::uint32_t pipeline_queue_depth = 16;
         if (argc >= 3 && !parse_u32(argv[2], &total_warps)) {
             std::fprintf(stderr, "invalid total_cta_warps: %s\n", argv[2]);
             return 1;
@@ -642,12 +687,30 @@ int main(int argc, char **argv) {
             std::fprintf(stderr, "invalid payload_bytes: %s\n", argv[5]);
             return 1;
         }
-        return run_matrix(config, total_warps);
+        if (argc >= 7 && !parse_u64(argv[6], &config.iterations)) {
+            std::fprintf(stderr, "invalid iterations: %s\n", argv[6]);
+            return 1;
+        }
+        if (argc >= 8 && !parse_u64(argv[7], &config.warmup_tasks)) {
+            std::fprintf(stderr, "invalid warmup_tasks: %s\n", argv[7]);
+            return 1;
+        }
+        if (argc >= 9 && !parse_u32(argv[8], &warp_queue_depth)) {
+            std::fprintf(stderr, "invalid warp_queue_depth: %s\n", argv[8]);
+            return 1;
+        }
+        if (argc >= 10 && !parse_u32(argv[9], &pipeline_queue_depth)) {
+            std::fprintf(stderr, "invalid pipeline_queue_depth: %s\n", argv[9]);
+            return 1;
+        }
+        return run_matrix(config, total_warps, warp_queue_depth, pipeline_queue_depth);
     }
-    if (argc > 4) {
+    if (argc > 9) {
         std::fprintf(stderr,
                      "usage: %s [model] [copy_warps] "
-                     "[device_batch]\n",
+                     "[device_batch] [shared_queue_depth] "
+                     "[host_batch] [payload_bytes] "
+                     "[iterations] [warmup_tasks]\n",
                      argv[0]);
         return 1;
     }
@@ -665,11 +728,31 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    if (argc == 4) {
+    if (argc >= 4) {
         if (!parse_u32(argv[3], &config.device_batch)) {
             std::fprintf(stderr, "invalid device_batch: %s\n", argv[3]);
             return 1;
         }
+    }
+    if (argc >= 5 && !parse_u32(argv[4], &config.shared_queue_depth)) {
+        std::fprintf(stderr, "invalid shared_queue_depth: %s\n", argv[4]);
+        return 1;
+    }
+    if (argc >= 6 && !parse_size(argv[5], &config.host_batch)) {
+        std::fprintf(stderr, "invalid host_batch: %s\n", argv[5]);
+        return 1;
+    }
+    if (argc >= 7 && !parse_size(argv[6], &config.payload_bytes)) {
+        std::fprintf(stderr, "invalid payload_bytes: %s\n", argv[6]);
+        return 1;
+    }
+    if (argc >= 8 && !parse_u64(argv[7], &config.iterations)) {
+        std::fprintf(stderr, "invalid iterations: %s\n", argv[7]);
+        return 1;
+    }
+    if (argc >= 9 && !parse_u64(argv[8], &config.warmup_tasks)) {
+        std::fprintf(stderr, "invalid warmup_tasks: %s\n", argv[8]);
+        return 1;
     }
     return dispatch(config);
 }

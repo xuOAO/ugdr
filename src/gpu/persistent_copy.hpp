@@ -6,7 +6,7 @@
 
 namespace ugdr::gpu {
 
-constexpr std::uint32_t kPersistentCopyResultSchemaVersion = 3;
+constexpr std::uint32_t kPersistentCopyResultSchemaVersion = 4;
 constexpr std::size_t kPersistentCopyMaxPayloadBytes = 8192;
 constexpr std::uint64_t kPersistentCopyMaxStageBufferBytes = UINT64_C(1) << 32;
 
@@ -89,6 +89,7 @@ struct PersistentCopyResult {
     std::size_t host_batch = 0;
     std::uint32_t device_batch = 0;
     std::uint32_t copy_warps = 0;
+    std::uint32_t shared_queue_depth = 0;
     std::uint32_t cta_count = 0;
     std::uint32_t ring_count = 0;
     bool host_warp_aware = false;
@@ -100,6 +101,8 @@ struct PersistentCopyResult {
     std::uint64_t accepted_tasks = 0;
     std::uint64_t completed_tasks = 0;
     std::uint64_t drained_tasks = 0;
+    std::uint64_t warmup_tasks = 0;
+    std::uint64_t iterations = 0;
     std::uint64_t copied_bytes = 0;
     double elapsed_seconds = 0.0;
     double task_millions_per_second = 0.0;
