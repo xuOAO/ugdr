@@ -9,7 +9,7 @@ namespace ugdr::gpu {
 constexpr std::uint32_t kPersistentCopyResultSchemaVersion = 4;
 constexpr std::size_t kPersistentCopyMaxPayloadBytes = 8192;
 constexpr std::uint64_t kPersistentCopyMaxStageBufferBytes = UINT64_C(1) << 32;
-constexpr std::uint32_t kWarpSpecializedPipelineMetaBatch = 32;
+constexpr std::uint32_t kWarpSpecializedMetaBatch = 32;
 
 enum class PersistentCopyModel : std::uint32_t {
     direct_atomic = 0,
@@ -344,7 +344,7 @@ class WarpSpecializedQueue {
     WarpSpecializedQueue(const WarpSpecializedQueue &) = delete;
     WarpSpecializedQueue &operator=(const WarpSpecializedQueue &) = delete;
 
-    static int allocate(std::size_t capacity, std::uint32_t copy_warps, std::uint32_t device_batch,
+    static int allocate(std::size_t capacity, std::uint32_t copy_warps,
                         std::uint32_t shared_queue_depth, std::uint64_t stage_buffer_base,
                         WarpSpecializedQueue *queue) noexcept;
     static int allocate_pipeline(std::size_t capacity, std::uint32_t copy_warps,

@@ -51,6 +51,7 @@ bool common_contract_smoke() {
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
     }
+    config.device_batch = ugdr::gpu::kWarpSpecializedMetaBatch;
     config.shared_queue_depth = 8;
     if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
         return false;
@@ -60,6 +61,10 @@ bool common_contract_smoke() {
         return false;
     }
     config.shared_queue_depth = 2;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
+        return false;
+    }
+    config.shared_queue_depth = 32;
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
     }
@@ -131,7 +136,7 @@ bool common_contract_smoke() {
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
     }
-    config.device_batch = ugdr::gpu::kWarpSpecializedPipelineMetaBatch;
+    config.device_batch = ugdr::gpu::kWarpSpecializedMetaBatch;
     config.copy_warps = 2;
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
@@ -829,8 +834,8 @@ int static_partition_head_of_line_smoke() {
     return 0;
 }
 
-int warp_specialized_queue_smoke(std::uint32_t copy_warps, std::uint32_t device_batch,
-                                 std::uint32_t shared_queue_depth, bool use_pipeline) {
+int warp_specialized_queue_smoke(std::uint32_t copy_warps, std::uint32_t shared_queue_depth,
+                                 bool use_pipeline) {
     constexpr std::size_t payload_bytes = 8192;
     constexpr std::size_t capacity = 32;
     constexpr std::uint64_t seed = UINT64_C(0xa11ce5a6e5a11ce5);
@@ -849,30 +854,24 @@ int warp_specialized_queue_smoke(std::uint32_t copy_warps, std::uint32_t device_
              capacity, 2, 8, payload.stage_buffer_base(), &queue) != EINVAL)) {
         return 79;
     }
-    const std::uint32_t expected_device_batch =
-        use_pipeline ? ugdr::gpu::kWarpSpecializedPipelineMetaBatch : device_batch;
-    if (ugdr::gpu::WarpSpecializedQueue::allocate(3, 4, 4, 8, payload.stage_buffer_base(),
+    if (ugdr::gpu::WarpSpecializedQueue::allocate(3, 4, 8, payload.stage_buffer_base(), &queue) !=
+            EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 31, 8, payload.stage_buffer_base(),
                                                   &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 31, 4, 8, payload.stage_buffer_base(),
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 3, payload.stage_buffer_base(),
                                                   &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 3, 8, payload.stage_buffer_base(),
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 1, payload.stage_buffer_base(),
                                                   &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 4, 3, payload.stage_buffer_base(),
-                                                  &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 1, 1, payload.stage_buffer_base(),
-                                                  &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 4, 1024, payload.stage_buffer_base(),
-                                                  &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 8, 4, payload.stage_buffer_base(),
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 32, payload.stage_buffer_base(),
                                                   &queue) != EINVAL ||
         (use_pipeline
              ? ugdr::gpu::WarpSpecializedQueue::allocate_pipeline(
                    capacity, copy_warps, shared_queue_depth, payload.stage_buffer_base(), &queue)
-             : ugdr::gpu::WarpSpecializedQueue::allocate(
-                   capacity, copy_warps, device_batch, shared_queue_depth,
-                   payload.stage_buffer_base(), &queue)) != 0 ||
+             : ugdr::gpu::WarpSpecializedQueue::allocate(capacity, copy_warps, shared_queue_depth,
+                                                         payload.stage_buffer_base(), &queue)) !=
+            0 ||
         queue.capacity() != capacity || queue.copy_warps() != copy_warps ||
-        queue.device_batch() != expected_device_batch ||
+        queue.device_batch() != ugdr::gpu::kWarpSpecializedMetaBatch ||
         queue.shared_queue_depth() != shared_queue_depth ||
         queue.host_meta_bytes() != 64 + capacity * 48 ||
         queue.shared_memory_bytes() !=
@@ -1030,16 +1029,14 @@ int main() {
     }
     struct WarpSpecializedCase {
         std::uint32_t copy_warps;
-        std::uint32_t device_batch;
         std::uint32_t shared_queue_depth;
     };
     constexpr WarpSpecializedCase warp_specialized_cases[]{
-        {1, 1, 2},   {4, 2, 2},    {2, 2, 4},    {4, 4, 8},    {6, 8, 16},   {16, 8, 32},
-        {10, 8, 64}, {14, 8, 128}, {18, 8, 256}, {22, 8, 512}, {30, 32, 32},
+        {1, 2}, {4, 2}, {2, 4}, {6, 4}, {10, 8}, {14, 8}, {18, 16}, {22, 16}, {30, 2}, {30, 16},
     };
     for (const auto &test_case : warp_specialized_cases) {
-        const int status = warp_specialized_queue_smoke(
-            test_case.copy_warps, test_case.device_batch, test_case.shared_queue_depth, false);
+        const int status =
+            warp_specialized_queue_smoke(test_case.copy_warps, test_case.shared_queue_depth, false);
         if (status != 0) {
             return status;
         }
@@ -1052,9 +1049,8 @@ int main() {
         {2, 16}, {6, 8}, {10, 4}, {14, 4}, {18, 2}, {22, 2}, {26, 2}, {30, 2}, {30, 16},
     };
     for (const auto &test_case : pipeline_cases) {
-        const int status = warp_specialized_queue_smoke(
-            test_case.copy_warps, ugdr::gpu::kWarpSpecializedPipelineMetaBatch,
-            test_case.shared_queue_depth, true);
+        const int status =
+            warp_specialized_queue_smoke(test_case.copy_warps, test_case.shared_queue_depth, true);
         if (status != 0) {
             return status;
         }

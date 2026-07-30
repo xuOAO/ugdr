@@ -12,7 +12,7 @@
 namespace ugdr::gpu {
 
 constexpr std::uint32_t kPersistentCudaCopyBackendCopyWarps = 30;
-constexpr std::uint32_t kPersistentCudaCopyBackendDeviceBatch = kWarpSpecializedPipelineMetaBatch;
+constexpr std::uint32_t kPersistentCudaCopyBackendDeviceBatch = kWarpSpecializedMetaBatch;
 constexpr std::uint32_t kPersistentCudaCopyBackendSharedQueueDepth = 16;
 constexpr std::size_t kPersistentCudaCopyBackendHostBatch = 64;
 

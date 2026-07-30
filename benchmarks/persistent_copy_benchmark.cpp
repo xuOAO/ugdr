@@ -454,7 +454,7 @@ int run_warp_specialized(PersistentCopyConfig config, PersistentCopyResult *outp
                                 config.outstanding_capacity, config.copy_warps,
                                 config.shared_queue_depth, payload.stage_buffer_base(), &queue)
                           : ugdr::gpu::WarpSpecializedQueue::allocate(
-                                config.outstanding_capacity, config.copy_warps, config.device_batch,
+                                config.outstanding_capacity, config.copy_warps,
                                 config.shared_queue_depth, payload.stage_buffer_base(), &queue);
     if (status != 0 || (use_pipeline ? queue.start_pipeline() : queue.start()) != 0) {
         return 5;
@@ -510,7 +510,7 @@ int dispatch(PersistentCopyConfig config, PersistentCopyResult *output = nullptr
         return run_static_partition_spsc(config, output);
     case PersistentCopyModel::warp_specialized:
         if (config.shared_queue_depth == 0) {
-            config.shared_queue_depth = 32;
+            config.shared_queue_depth = 16;
         }
         return run_warp_specialized(config, output);
     case PersistentCopyModel::warp_specialized_pipeline:
@@ -570,9 +570,10 @@ int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps,
                 ? total_warps - 2
                 : total_warps;
         if (models[index] == PersistentCopyModel::warp_specialized) {
+            case_config.device_batch = ugdr::gpu::kWarpSpecializedMetaBatch;
             case_config.shared_queue_depth = warp_queue_depth;
         } else if (models[index] == PersistentCopyModel::warp_specialized_pipeline) {
-            case_config.device_batch = ugdr::gpu::kWarpSpecializedPipelineMetaBatch;
+            case_config.device_batch = ugdr::gpu::kWarpSpecializedMetaBatch;
             case_config.shared_queue_depth = pipeline_queue_depth;
         } else {
             case_config.shared_queue_depth = 0;
@@ -598,12 +599,12 @@ int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps,
                 "warp_queue_depth=%u pipeline_queue_depth=%u "
                 "payload_bytes=%zu parent_wr_bytes=%zu "
                 "outstanding_capacity=%zu host_batch=%zu "
-                "device_batch=%u pipeline_meta_batch=%u warmup_tasks=%llu "
+                "device_batch=%u warp_specialized_meta_batch=%u warmup_tasks=%llu "
                 "iterations=%llu fairness_passed=1 "
                 "correctness_passed=1\n",
                 total_warps, warp_queue_depth, pipeline_queue_depth, config.payload_bytes,
                 config.parent_wr_bytes, config.outstanding_capacity, config.host_batch,
-                config.device_batch, ugdr::gpu::kWarpSpecializedPipelineMetaBatch,
+                config.device_batch, ugdr::gpu::kWarpSpecializedMetaBatch,
                 static_cast<unsigned long long>(config.warmup_tasks),
                 static_cast<unsigned long long>(config.iterations));
     for (const auto &result : results) {
@@ -671,7 +672,7 @@ int main(int argc, char **argv) {
     PersistentCopyConfig config;
     if (argc >= 2 && std::strcmp(argv[1], "matrix") == 0) {
         std::uint32_t total_warps = 32;
-        std::uint32_t warp_queue_depth = 32;
+        std::uint32_t warp_queue_depth = 16;
         std::uint32_t pipeline_queue_depth = 16;
         if (argc >= 3 && !parse_u32(argv[2], &total_warps)) {
             std::fprintf(stderr, "invalid total_cta_warps: %s\n", argv[2]);
