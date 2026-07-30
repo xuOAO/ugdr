@@ -14,6 +14,11 @@ F03-S03 adds PD/MR/CQ lifecycle, daemon key lookup, and UUID-routed CUDA IPC map
 uses the control boundary without depending directly on the generic IPC layer and uses `ugdr_gpu`
 only for Client-side CUDA allocation export.
 
+F06-S03 adds `ugdr_cuda_backend` as the production adapter between the dependency-neutral
+Loop Worker `CopyBackend` contract and `ugdr_gpu` persistent-copy primitives. Keeping this
+adapter separate prevents Client-side CUDA memory export users from inheriting the Worker
+data-plane dependency graph.
+
 F04 adds `ugdr_queue` as the shared data-plane layout boundary. It owns versioned SPSC ring
 memory, descriptor slots, and mapping validation; `ugdr_control` creates and transfers those
 mappings, while `ugdr_api` performs public post and poll directly against them. F04-S05 keeps the
@@ -53,6 +58,7 @@ these test or benchmark targets is a production target or dependency.
 | `ugdr_control` | `src/control` | UGDR 控制语义 adapter、类型化对象注册表与 Device/Context 服务 |
 | `ugdr_worker` | `src/worker` | Loop Worker 与 Local Transport 的有界数据面推进 |
 | `ugdr_gpu` | `src/gpu` | CUDA allocation 导出、per-GPU runtime context 与 IPC mapping backend |
+| `ugdr_cuda_backend` | `src/gpu` | Persistent CUDA copy kernel 与 Loop Worker CopyBackend 的生产适配 |
 | `ugdr_client` | `apps/client` | 最小 Client 可执行文件 |
 | `ugdr_daemon` | `apps/daemon` | Control、Worker 与 GPU 的组合根 |
 
@@ -66,6 +72,7 @@ these test or benchmark targets is a production target or dependency.
 | `ugdr_control` | `ugdr_ipc`, `ugdr_queue` |
 | `ugdr_worker` | `ugdr_control`, `ugdr_ipc`, `ugdr_queue` |
 | `ugdr_gpu` | None |
+| `ugdr_cuda_backend` | `ugdr_gpu`, `ugdr_control`, `ugdr_ipc`, `ugdr_queue`, `ugdr_worker` |
 | `ugdr_client` | `ugdr_api`, `ugdr_control`, `ugdr_ipc`, `ugdr_gpu`, `ugdr_queue` |
 | `ugdr_daemon` | `ugdr_control`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu`, `ugdr_queue` |
 <!-- END GENERATED: module-boundaries -->

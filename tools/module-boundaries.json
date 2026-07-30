@@ -17,9 +17,12 @@
     "src/queue/shared_ring.hpp",
     "src/queue/shared_ring.cpp",
     "src/worker",
+    "src/worker/copy_backend.hpp",
     "src/gpu",
     "src/gpu/cuda_ipc_memory.hpp",
     "src/gpu/cuda_ipc_memory.cu",
+    "src/gpu/persistent_copy_backend.hpp",
+    "src/gpu/persistent_copy_backend.cu",
     "apps/client",
     "apps/daemon",
     "benchmarks",
@@ -42,6 +45,7 @@
     "tests/unit/device_context_test.cpp",
     "tests/unit/pd_mr_cq_test.cpp",
     "tests/unit/shared_ring_test.cpp",
+    "tests/unit/persistent_copy_backend_test.cpp",
     "tests/__init__.py",
     "tests/integration",
     "tests/integration/__init__.py",
@@ -159,6 +163,7 @@
     "ugdr_control",
     "ugdr_worker",
     "ugdr_gpu",
+    "ugdr_cuda_backend",
     "ugdr_client",
     "ugdr_daemon"
   ],
@@ -220,6 +225,26 @@
       "to": "ugdr_queue"
     },
     {
+      "from": "ugdr_cuda_backend",
+      "to": "ugdr_gpu"
+    },
+    {
+      "from": "ugdr_cuda_backend",
+      "to": "ugdr_control"
+    },
+    {
+      "from": "ugdr_cuda_backend",
+      "to": "ugdr_ipc"
+    },
+    {
+      "from": "ugdr_cuda_backend",
+      "to": "ugdr_queue"
+    },
+    {
+      "from": "ugdr_cuda_backend",
+      "to": "ugdr_worker"
+    },
+    {
       "from": "ugdr_daemon",
       "to": "ugdr_control"
     },
@@ -264,6 +289,10 @@
     "ugdr_gpu": {
       "path": "src/gpu",
       "responsibility": "CUDA allocation 导出、per-GPU runtime context 与 IPC mapping backend"
+    },
+    "ugdr_cuda_backend": {
+      "path": "src/gpu",
+      "responsibility": "Persistent CUDA copy kernel 与 Loop Worker CopyBackend 的生产适配"
     },
     "ugdr_client": {
       "path": "apps/client",

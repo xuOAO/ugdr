@@ -103,6 +103,26 @@ target_link_libraries(ugdr_gpu
         ${CUDA_DRIVER_LIBRARY}
 )
 
+add_library(ugdr_cuda_backend STATIC
+    src/gpu/persistent_copy_backend.cu
+)
+set_source_files_properties(
+    src/gpu/persistent_copy_backend.cu
+    PROPERTIES
+        COMPILE_OPTIONS "--generate-code=arch=compute_86,code=sm_86"
+)
+target_include_directories(ugdr_cuda_backend
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/src
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+)
+target_link_libraries(ugdr_cuda_backend
+    PRIVATE
+        ugdr_gpu
+        ugdr_worker
+        ${CUDA_DRIVER_LIBRARY}
+)
+
 add_executable(ugdr_client
     apps/client/main.cpp
 )
