@@ -444,6 +444,65 @@ int main() {
                 break;
             }
         }
+        if (result != 0) {
+            break;
+        }
+
+        ugdr_recv_wr unused_receive{};
+        unused_receive.wr_id = 901;
+        ugdr_recv_wr *bad_unused_receive = nullptr;
+        ugdr_sge unaligned_sge{
+            static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(source)) + 3, 37,
+            source_mr->lkey};
+        ugdr_send_wr unsignaled_write{};
+        unsignaled_write.wr_id = 801;
+        unsignaled_write.sg_list = &unaligned_sge;
+        unsignaled_write.num_sge = 1;
+        unsignaled_write.opcode = UGDR_WR_RDMA_WRITE;
+        unsignaled_write.wr.rdma.remote_addr =
+            static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(target)) + 129;
+        unsignaled_write.wr.rdma.rkey = target_mr->rkey;
+        ugdr_send_wr *bad_unsignaled_write = nullptr;
+        if (ugdr_post_recv(responder, &unused_receive, &bad_unused_receive) != 0 ||
+            bad_unused_receive != nullptr ||
+            ugdr_post_send(requester, &unsignaled_write, &bad_unsignaled_write) != 0 ||
+            bad_unsignaled_write != nullptr) {
+            result = 15;
+            break;
+        }
+
+        bool unaligned_copy_complete = false;
+        for (int iteration = 0; iteration < 5000; ++iteration) {
+            if (cudaMemcpy(observed.data(), target, observed.size(), cudaMemcpyDeviceToHost) !=
+                cudaSuccess) {
+                result = 16;
+                break;
+            }
+            unaligned_copy_complete = true;
+            for (std::size_t index = 0; index < unaligned_sge.length; ++index) {
+                if (observed[129 + index] != source_data[3 + index]) {
+                    unaligned_copy_complete = false;
+                    break;
+                }
+            }
+            if (unaligned_copy_complete) {
+                break;
+            }
+            ::usleep(1000);
+        }
+        if (result != 0 || !unaligned_copy_complete) {
+            if (result == 0) {
+                result = 17;
+            }
+            break;
+        }
+        ::usleep(20000);
+        ugdr_wc unexpected{};
+        if (ugdr_poll_cq(send_cq, 1, &unexpected) != 0 ||
+            ugdr_poll_cq(receive_cq, 1, &unexpected) != 0) {
+            result = 18;
+            break;
+        }
     } while (false);
 
     bool cleanup_ok = true;

@@ -57,6 +57,7 @@
     "tests/integration/pd_mr_cq_client_server_test.cpp",
     "tests/integration/gpudirect_visibility_test.cpp",
     "tests/integration/persistent_copy_backend_lifecycle_test.cpp",
+    "tests/integration/persistent_copy_backend_copy_test.cpp",
     "tests/integration/cuda_ipc_mr_test.cpp",
     "tests/integration/shared_queue_mapping_test.cpp",
     "tests/integration/queue_api_client_server_test.cpp",

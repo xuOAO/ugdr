@@ -522,6 +522,52 @@ int backend_start_failure_test() {
     return 0;
 }
 
+int backend_backpressure_test() {
+    auto config = valid_config();
+    config.queue_capacity = 64;
+    config.max_batch_delay_nanoseconds = 100;
+    FakePersistentCopyQueue runtime;
+    FakeVisibilityGate visibility;
+    FakeClock clock;
+    clock.now = 100;
+    ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+    if (backend.start(config) != 0) {
+        return 1;
+    }
+    for (std::uint64_t index = 0; index < 64; ++index) {
+        if (!backend.try_submit(valid_request(index))) {
+            return 2;
+        }
+    }
+    if (backend.try_submit(valid_request(64)) || backend.outstanding_tasks() != 64 ||
+        runtime.submitted.size() != 64) {
+        return 3;
+    }
+
+    runtime.completions.push_back({1, CopyTaskResult::success});
+    BackendCompletion completion{};
+    if (!backend.try_pop_completion(completion) || completion.parent_request_id != 1000 ||
+        !backend.try_submit(valid_request(64)) || backend.outstanding_tasks() != 64 ||
+        backend.request_stop() != 0 || runtime.submitted.size() != 65 ||
+        runtime.submitted.back().task_id != 65) {
+        return 4;
+    }
+    for (std::uint64_t task_id = 2; task_id <= 65; ++task_id) {
+        runtime.completions.push_back({task_id, CopyTaskResult::success});
+    }
+    for (std::uint64_t index = 1; index < 65; ++index) {
+        if (!backend.try_pop_completion(completion) ||
+            completion.parent_request_id != 1000 + index ||
+            completion.result != DatagramResult::success) {
+            return 5;
+        }
+    }
+    if (backend.outstanding_tasks() != 0 || backend.wait() != 0 || visibility.flush_calls != 2) {
+        return 6;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -560,6 +606,10 @@ int main() {
     const int start_failure_status = backend_start_failure_test();
     if (start_failure_status != 0) {
         return 170 + start_failure_status;
+    }
+    const int backpressure_status = backend_backpressure_test();
+    if (backpressure_status != 0) {
+        return 190 + backpressure_status;
     }
     return 0;
 }
