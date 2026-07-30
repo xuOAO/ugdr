@@ -215,6 +215,27 @@ set_tests_properties(
         TIMEOUT 30
 )
 
+add_executable(ugdr_gpudirect_visibility_test
+    gpudirect_visibility_test.cpp
+)
+target_include_directories(ugdr_gpudirect_visibility_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_gpudirect_visibility_test
+    PRIVATE
+        ugdr_cuda_backend
+)
+add_test(
+    NAME ugdr_gpudirect_visibility
+    COMMAND ugdr_gpudirect_visibility_test
+)
+set_tests_properties(
+    ugdr_gpudirect_visibility
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+)
+
 add_test(
     NAME project_state_transition_matrix
     COMMAND

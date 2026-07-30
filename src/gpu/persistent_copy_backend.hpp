@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gpu/gpudirect_visibility.hpp"
 #include "gpu/persistent_copy.hpp"
 #include "worker/copy_backend.hpp"
 
@@ -51,8 +52,8 @@ struct TaskContextSlot {
 
 class PersistentCudaCopyHost {
   public:
-    int initialize(const PersistentCudaCopyBackendConfig &config,
-                   PersistentCopyQueue *queue) noexcept;
+    int initialize(const PersistentCudaCopyBackendConfig &config, PersistentCopyQueue *queue,
+                   GpuDirectVisibilityGate *visibility_gate) noexcept;
     int try_submit(const worker::BackendRequest &request, std::uint64_t now_nanoseconds,
                    bool *accepted) noexcept;
     int progress_host_batch(std::uint64_t now_nanoseconds) noexcept;
@@ -68,6 +69,7 @@ class PersistentCudaCopyHost {
 
     PersistentCudaCopyBackendConfig config_{};
     PersistentCopyQueue *queue_ = nullptr;
+    GpuDirectVisibilityGate *visibility_gate_ = nullptr;
     std::unique_ptr<TaskContextSlot[]> contexts_;
     std::array<CopyTask, kPersistentCudaCopyBackendHostBatch> pending_tasks_{};
     std::size_t capacity_mask_ = 0;
@@ -76,6 +78,7 @@ class PersistentCudaCopyHost {
     std::uint64_t next_task_id_ = 1;
     std::uint64_t first_pending_nanoseconds_ = 0;
     bool publish_blocked_ = false;
+    bool pending_flushed_ = false;
 };
 
 }  // namespace ugdr::gpu

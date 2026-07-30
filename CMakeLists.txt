@@ -104,9 +104,11 @@ target_link_libraries(ugdr_gpu
 )
 
 add_library(ugdr_cuda_backend STATIC
+    src/gpu/gpudirect_visibility.cu
     src/gpu/persistent_copy_backend.cu
 )
 set_source_files_properties(
+    src/gpu/gpudirect_visibility.cu
     src/gpu/persistent_copy_backend.cu
     PROPERTIES
         LANGUAGE CXX

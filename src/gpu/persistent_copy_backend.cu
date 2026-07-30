@@ -56,8 +56,9 @@ int validate_persistent_cuda_copy_backend_config(
 }
 
 int PersistentCudaCopyHost::initialize(const PersistentCudaCopyBackendConfig &config,
-                                       PersistentCopyQueue *queue) noexcept {
-    if (initialized() || queue == nullptr ||
+                                       PersistentCopyQueue *queue,
+                                       GpuDirectVisibilityGate *visibility_gate) noexcept {
+    if (initialized() || queue == nullptr || visibility_gate == nullptr ||
         validate_persistent_cuda_copy_backend_config(config) != 0 ||
         config.queue_capacity > std::numeric_limits<std::size_t>::max() / sizeof(TaskContextSlot)) {
         return EINVAL;
@@ -69,6 +70,7 @@ int PersistentCudaCopyHost::initialize(const PersistentCudaCopyBackendConfig &co
     }
     config_ = config;
     queue_ = queue;
+    visibility_gate_ = visibility_gate;
     contexts_ = std::move(contexts);
     capacity_mask_ = config.queue_capacity - 1;
     return 0;
@@ -102,6 +104,7 @@ int PersistentCudaCopyHost::try_submit(const worker::BackendRequest &request,
     pending_tasks_[pending_count_] = task;
     if (pending_count_ == 0) {
         first_pending_nanoseconds_ = now_nanoseconds;
+        pending_flushed_ = false;
     }
     ++pending_count_;
     ++outstanding_tasks_;
@@ -178,6 +181,15 @@ bool PersistentCudaCopyHost::initialized() const noexcept {
 }
 
 int PersistentCudaCopyHost::publish_pending() noexcept {
+    if (!pending_flushed_) {
+        const int flush_status = visibility_gate_->flush_current_context_to_owner();
+        if (flush_status != 0) {
+            publish_blocked_ = true;
+            return flush_status;
+        }
+        pending_flushed_ = true;
+    }
+
     std::size_t submitted_count = 0;
     const int status =
         queue_->try_submit_batch(pending_tasks_.data(), pending_count_, &submitted_count);
@@ -209,6 +221,7 @@ int PersistentCudaCopyHost::publish_pending() noexcept {
     } else {
         first_pending_nanoseconds_ = 0;
         publish_blocked_ = false;
+        pending_flushed_ = false;
     }
     return 0;
 }

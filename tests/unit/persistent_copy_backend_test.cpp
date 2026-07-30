@@ -13,6 +13,7 @@ namespace {
 using ugdr::gpu::CopyCompletion;
 using ugdr::gpu::CopyTask;
 using ugdr::gpu::CopyTaskResult;
+using ugdr::gpu::GpuDirectVisibilityGate;
 using ugdr::gpu::PersistentCopyQueue;
 using ugdr::worker::BackendCompletion;
 using ugdr::worker::BackendRequest;
@@ -24,6 +25,9 @@ class FakePersistentCopyQueue final : public PersistentCopyQueue {
                          std::size_t *submitted_count) noexcept override {
         ++submit_calls;
         last_requested = task_count;
+        if (events != nullptr) {
+            events->push_back(2);
+        }
         if (submit_status != 0) {
             return submit_status;
         }
@@ -46,8 +50,31 @@ class FakePersistentCopyQueue final : public PersistentCopyQueue {
     int submit_status = 0;
     std::size_t submit_calls = 0;
     std::size_t last_requested = 0;
+    std::vector<int> *events = nullptr;
     std::vector<CopyTask> submitted;
     std::deque<CopyCompletion> completions;
+};
+
+class FakeVisibilityGate final : public GpuDirectVisibilityGate {
+  public:
+    int initialize(std::uint32_t device_ordinal) noexcept override {
+        initialized_device = device_ordinal;
+        return initialize_status;
+    }
+
+    int flush_current_context_to_owner() noexcept override {
+        ++flush_calls;
+        if (events != nullptr) {
+            events->push_back(1);
+        }
+        return flush_status;
+    }
+
+    std::uint32_t initialized_device = 0;
+    int initialize_status = 0;
+    int flush_status = 0;
+    std::size_t flush_calls = 0;
+    std::vector<int> *events = nullptr;
 };
 
 ugdr::gpu::PersistentCudaCopyBackendConfig valid_config() {
@@ -125,8 +152,9 @@ int timed_batch_and_completion_test() {
     config.queue_capacity = 128;
     config.max_batch_delay_nanoseconds = 100;
     FakePersistentCopyQueue queue;
+    FakeVisibilityGate visibility;
     ugdr::gpu::PersistentCudaCopyHost host;
-    if (host.initialize(config, &queue) != 0 || !host.initialized()) {
+    if (host.initialize(config, &queue, &visibility) != 0 || !host.initialized()) {
         return 1;
     }
 
@@ -173,8 +201,9 @@ int full_and_partial_batch_test() {
     config.max_batch_delay_nanoseconds = 100;
     FakePersistentCopyQueue queue;
     queue.submit_limit = 10;
+    FakeVisibilityGate visibility;
     ugdr::gpu::PersistentCudaCopyHost host;
-    if (host.initialize(config, &queue) != 0) {
+    if (host.initialize(config, &queue, &visibility) != 0) {
         return 1;
     }
 
@@ -194,8 +223,8 @@ int full_and_partial_batch_test() {
     if (host.try_submit(valid_request(64), 100, &accepted) != 0 || accepted) {
         return 4;
     }
-    if (host.progress_host_batch(100) != 0 || queue.submit_calls != 2 ||
-        queue.submitted.size() != 20 || host.pending_tasks() != 44 ||
+    if (host.progress_host_batch(100) != 0 || visibility.flush_calls != 1 ||
+        queue.submit_calls != 2 || queue.submitted.size() != 20 || host.pending_tasks() != 44 ||
         queue.submitted[10].task_id != 11 || queue.submitted[19].task_id != 20) {
         return 5;
     }
@@ -206,8 +235,9 @@ int invalid_request_and_completion_test() {
     auto config = valid_config();
     config.queue_capacity = 64;
     FakePersistentCopyQueue queue;
+    FakeVisibilityGate visibility;
     ugdr::gpu::PersistentCudaCopyHost host;
-    if (host.initialize(config, &queue) != 0) {
+    if (host.initialize(config, &queue, &visibility) != 0) {
         return 1;
     }
 
@@ -233,8 +263,9 @@ int context_ring_reuse_test() {
     config.queue_capacity = 64;
     config.max_batch_delay_nanoseconds = 100;
     FakePersistentCopyQueue queue;
+    FakeVisibilityGate visibility;
     ugdr::gpu::PersistentCudaCopyHost host;
-    if (host.initialize(config, &queue) != 0) {
+    if (host.initialize(config, &queue, &visibility) != 0) {
         return 1;
     }
     for (std::uint64_t index = 0; index < 64; ++index) {
@@ -263,6 +294,40 @@ int context_ring_reuse_test() {
     return 0;
 }
 
+int visibility_order_and_failure_test() {
+    auto config = valid_config();
+    config.queue_capacity = 64;
+    config.max_batch_delay_nanoseconds = 100;
+    std::vector<int> events;
+    FakePersistentCopyQueue queue;
+    queue.events = &events;
+    FakeVisibilityGate visibility;
+    visibility.events = &events;
+    visibility.flush_status = EIO;
+    ugdr::gpu::PersistentCudaCopyHost host;
+    if (host.initialize(config, &queue, &visibility) != 0) {
+        return 1;
+    }
+    for (std::uint64_t index = 0; index < 64; ++index) {
+        bool accepted = false;
+        const int status = host.try_submit(valid_request(index), 100, &accepted);
+        if ((index != 63 && status != 0) || (index == 63 && status != EIO) || !accepted) {
+            return 2;
+        }
+    }
+    if (events != std::vector<int>{1} || visibility.flush_calls != 1 || queue.submit_calls != 0 ||
+        host.pending_tasks() != 64) {
+        return 3;
+    }
+
+    visibility.flush_status = 0;
+    if (host.progress_host_batch(100) != 0 || events != std::vector<int>({1, 1, 2}) ||
+        visibility.flush_calls != 2 || queue.submit_calls != 1 || host.pending_tasks() != 0) {
+        return 4;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -285,6 +350,10 @@ int main() {
     const int reuse_status = context_ring_reuse_test();
     if (reuse_status != 0) {
         return 90 + reuse_status;
+    }
+    const int visibility_status = visibility_order_and_failure_test();
+    if (visibility_status != 0) {
+        return 110 + visibility_status;
     }
     return 0;
 }
