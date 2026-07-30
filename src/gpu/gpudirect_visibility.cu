@@ -125,6 +125,13 @@ int CudaGpuDirectVisibilityGate::flush_current_context_to_owner() noexcept {
                                    CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER));
 }
 
+int CudaGpuDirectVisibilityGate::reset() noexcept {
+    capabilities_ = {};
+    initialized_ = false;
+    flush_required_ = false;
+    return 0;
+}
+
 const GpuDirectVisibilityCapabilities &CudaGpuDirectVisibilityGate::capabilities() const noexcept {
     return capabilities_;
 }

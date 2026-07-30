@@ -236,6 +236,28 @@ set_tests_properties(
         SKIP_RETURN_CODE 77
 )
 
+add_executable(ugdr_persistent_copy_backend_lifecycle_test
+    persistent_copy_backend_lifecycle_test.cpp
+)
+target_include_directories(ugdr_persistent_copy_backend_lifecycle_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_persistent_copy_backend_lifecycle_test
+    PRIVATE
+        ugdr_cuda_backend
+)
+add_test(
+    NAME ugdr_persistent_copy_backend_lifecycle
+    COMMAND ugdr_persistent_copy_backend_lifecycle_test
+)
+set_tests_properties(
+    ugdr_persistent_copy_backend_lifecycle
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30
+)
+
 add_test(
     NAME project_state_transition_matrix
     COMMAND

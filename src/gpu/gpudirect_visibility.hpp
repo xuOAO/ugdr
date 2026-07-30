@@ -26,12 +26,14 @@ class GpuDirectVisibilityGate {
 
     virtual int initialize(std::uint32_t device_ordinal) noexcept = 0;
     virtual int flush_current_context_to_owner() noexcept = 0;
+    virtual int reset() noexcept = 0;
 };
 
 class CudaGpuDirectVisibilityGate final : public GpuDirectVisibilityGate {
   public:
     int initialize(std::uint32_t device_ordinal) noexcept override;
     int flush_current_context_to_owner() noexcept override;
+    int reset() noexcept override;
 
     [[nodiscard]] const GpuDirectVisibilityCapabilities &capabilities() const noexcept;
     [[nodiscard]] bool initialized() const noexcept;

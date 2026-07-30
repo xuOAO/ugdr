@@ -14,13 +14,26 @@ using ugdr::gpu::CopyCompletion;
 using ugdr::gpu::CopyTask;
 using ugdr::gpu::CopyTaskResult;
 using ugdr::gpu::GpuDirectVisibilityGate;
+using ugdr::gpu::PersistentCopyClock;
 using ugdr::gpu::PersistentCopyQueue;
+using ugdr::gpu::PersistentCopyRuntime;
 using ugdr::worker::BackendCompletion;
 using ugdr::worker::BackendRequest;
 using ugdr::worker::DatagramResult;
 
-class FakePersistentCopyQueue final : public PersistentCopyQueue {
+class FakePersistentCopyQueue final : public PersistentCopyRuntime {
   public:
+    int initialize_device(std::uint32_t device_ordinal) noexcept override {
+        ++initialize_device_calls;
+        initialized_device = device_ordinal;
+        return initialize_device_status;
+    }
+
+    int start(const ugdr::gpu::PersistentCudaCopyBackendConfig &) noexcept override {
+        ++start_calls;
+        return start_status;
+    }
+
     int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
                          std::size_t *submitted_count) noexcept override {
         ++submit_calls;
@@ -46,9 +59,35 @@ class FakePersistentCopyQueue final : public PersistentCopyQueue {
         return 0;
     }
 
+    int request_stop() noexcept override {
+        ++request_stop_calls;
+        return request_stop_status;
+    }
+
+    int wait() noexcept override {
+        ++wait_calls;
+        return wait_status;
+    }
+
+    int reset() noexcept override {
+        ++reset_calls;
+        return reset_status;
+    }
+
+    std::uint32_t initialized_device = 0;
+    int initialize_device_status = 0;
+    int start_status = 0;
     std::size_t submit_limit = std::numeric_limits<std::size_t>::max();
     int submit_status = 0;
+    int request_stop_status = 0;
+    int wait_status = 0;
+    int reset_status = 0;
+    std::size_t initialize_device_calls = 0;
+    std::size_t start_calls = 0;
     std::size_t submit_calls = 0;
+    std::size_t request_stop_calls = 0;
+    std::size_t wait_calls = 0;
+    std::size_t reset_calls = 0;
     std::size_t last_requested = 0;
     std::vector<int> *events = nullptr;
     std::vector<CopyTask> submitted;
@@ -58,6 +97,7 @@ class FakePersistentCopyQueue final : public PersistentCopyQueue {
 class FakeVisibilityGate final : public GpuDirectVisibilityGate {
   public:
     int initialize(std::uint32_t device_ordinal) noexcept override {
+        ++initialize_calls;
         initialized_device = device_ordinal;
         return initialize_status;
     }
@@ -70,11 +110,28 @@ class FakeVisibilityGate final : public GpuDirectVisibilityGate {
         return flush_status;
     }
 
+    int reset() noexcept override {
+        ++reset_calls;
+        return reset_status;
+    }
+
     std::uint32_t initialized_device = 0;
     int initialize_status = 0;
     int flush_status = 0;
+    int reset_status = 0;
+    std::size_t initialize_calls = 0;
     std::size_t flush_calls = 0;
+    std::size_t reset_calls = 0;
     std::vector<int> *events = nullptr;
+};
+
+class FakeClock final : public PersistentCopyClock {
+  public:
+    std::uint64_t now_nanoseconds() noexcept override {
+        return now;
+    }
+
+    std::uint64_t now = 0;
 };
 
 ugdr::gpu::PersistentCudaCopyBackendConfig valid_config() {
@@ -328,6 +385,143 @@ int visibility_order_and_failure_test() {
     return 0;
 }
 
+int backend_lifecycle_test() {
+    auto config = valid_config();
+    config.queue_capacity = 64;
+    config.max_batch_delay_nanoseconds = 100;
+    FakePersistentCopyQueue runtime;
+    FakeVisibilityGate visibility;
+    FakeClock clock;
+    clock.now = 100;
+    ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+    if (backend.start(config) != 0 ||
+        backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::accepting ||
+        runtime.initialize_device_calls != 1 || runtime.start_calls != 1 ||
+        visibility.initialize_calls != 1) {
+        return 1;
+    }
+
+    auto invalid_request = valid_request(0);
+    invalid_request.source_daemon_address = config.stage_buffer_base - 1;
+    if (!backend.try_submit(invalid_request) || backend.outstanding_tasks() != 1) {
+        return 2;
+    }
+    BackendCompletion completion{};
+    if (!backend.try_pop_completion(completion) ||
+        completion.parent_request_id != invalid_request.parent_request_id ||
+        completion.result != DatagramResult::backend_error || backend.outstanding_tasks() != 0) {
+        return 3;
+    }
+
+    const BackendRequest request = valid_request(0);
+    if (!backend.try_submit(request) || backend.request_stop() != 0 ||
+        backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::draining ||
+        runtime.submitted.size() != 1 || runtime.submitted.front().task_id != 2 ||
+        runtime.request_stop_calls != 1 || backend.wait() != EAGAIN) {
+        return 4;
+    }
+    runtime.completions.push_back({runtime.submitted.front().task_id, CopyTaskResult::success});
+    if (!backend.try_pop_completion(completion) ||
+        completion.parent_request_id != request.parent_request_id ||
+        completion.result != DatagramResult::success || backend.outstanding_tasks() != 0 ||
+        backend.wait() != 0 ||
+        backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::stopped ||
+        runtime.wait_calls != 1 || runtime.reset_calls != 1 || visibility.reset_calls != 1) {
+        return 5;
+    }
+    if (backend.request_stop() != EINVAL || backend.try_submit(request) ||
+        backend.try_pop_completion(completion)) {
+        return 6;
+    }
+    return 0;
+}
+
+int backend_error_closure_test() {
+    auto config = valid_config();
+    config.queue_capacity = 64;
+    config.max_batch_delay_nanoseconds = 100;
+
+    {
+        FakePersistentCopyQueue runtime;
+        FakeVisibilityGate visibility;
+        FakeClock clock;
+        clock.now = 100;
+        ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+        if (backend.start(config) != 0 || !backend.try_submit(valid_request(0))) {
+            return 1;
+        }
+        visibility.flush_status = EIO;
+        clock.now = 200;
+        BackendCompletion completion{};
+        if (!backend.try_pop_completion(completion) ||
+            completion.result != DatagramResult::backend_error ||
+            backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::accepting ||
+            backend.last_error() != EIO || runtime.submit_calls != 0 ||
+            backend.request_stop() != 0 || backend.wait() != 0) {
+            return 2;
+        }
+    }
+
+    {
+        FakePersistentCopyQueue runtime;
+        FakeVisibilityGate visibility;
+        FakeClock clock;
+        clock.now = 100;
+        ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+        if (backend.start(config) != 0 || !backend.try_submit(valid_request(0))) {
+            return 3;
+        }
+        runtime.submit_status = EIO;
+        clock.now = 200;
+        BackendCompletion completion{};
+        if (!backend.try_pop_completion(completion) ||
+            completion.result != DatagramResult::backend_error ||
+            backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::draining ||
+            backend.last_error() != EIO || runtime.submit_calls != 1 ||
+            runtime.request_stop_calls != 1 || backend.wait() != 0 ||
+            backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::stopped) {
+            return 4;
+        }
+    }
+    return 0;
+}
+
+int backend_start_failure_test() {
+    auto config = valid_config();
+    config.queue_capacity = 64;
+
+    {
+        FakePersistentCopyQueue runtime;
+        FakeVisibilityGate visibility;
+        visibility.initialize_status = EOPNOTSUPP;
+        FakeClock clock;
+        ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+        if (backend.start(config) != EOPNOTSUPP ||
+            backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::stopped ||
+            runtime.reset_calls != 1 || visibility.reset_calls != 1) {
+            return 1;
+        }
+    }
+
+    {
+        FakePersistentCopyQueue runtime;
+        runtime.start_status = EIO;
+        FakeVisibilityGate visibility;
+        FakeClock clock;
+        ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+        if (backend.start(config) != EIO ||
+            backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::stopped ||
+            runtime.reset_calls != 1 || visibility.reset_calls != 1) {
+            return 2;
+        }
+        runtime.start_status = 0;
+        if (backend.start(config) != 0 || backend.request_stop() != 0 || backend.wait() != 0) {
+            return 3;
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -354,6 +548,18 @@ int main() {
     const int visibility_status = visibility_order_and_failure_test();
     if (visibility_status != 0) {
         return 110 + visibility_status;
+    }
+    const int lifecycle_status = backend_lifecycle_test();
+    if (lifecycle_status != 0) {
+        return 130 + lifecycle_status;
+    }
+    const int closure_status = backend_error_closure_test();
+    if (closure_status != 0) {
+        return 150 + closure_status;
+    }
+    const int start_failure_status = backend_start_failure_test();
+    if (start_failure_status != 0) {
+        return 170 + start_failure_status;
     }
     return 0;
 }
