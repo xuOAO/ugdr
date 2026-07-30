@@ -2,6 +2,7 @@
 
 #include <cuda.h>
 #include <cuda/barrier>
+#include <cuda/std/chrono>
 #include <cuda_runtime_api.h>
 
 #include <cerrno>
@@ -313,6 +314,19 @@ struct alignas(16) WarpSpecializedSharedCompletionSlot {
 };
 
 using BlockBarrier = cuda::barrier<cuda::thread_scope_block>;
+
+template <std::uint32_t SleepNanoseconds>
+__device__ __forceinline__ void wait_parity_with_fixed_sleep(BlockBarrier *barrier,
+                                                             bool phase) noexcept {
+    static_assert(SleepNanoseconds > 0);
+    while (!barrier->try_wait_parity_for(phase, cuda::std::chrono::nanoseconds::zero())) {
+        __nanosleep(SleepNanoseconds);
+    }
+}
+
+__device__ __forceinline__ void wait_pipeline_parity(BlockBarrier *barrier, bool phase) noexcept {
+    wait_parity_with_fixed_sleep<64>(barrier, phase);
+}
 
 struct alignas(16) WarpSpecializedPipelineTaskSlot {
     CopyTask task;
@@ -938,7 +952,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                         owner * SharedQueueDepth + (local_index & kSharedQueueMask);
                     auto *const slot = &shared_task_slots[slot_index];
                     const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
-                    slot->consumed.wait_parity(!phase);
+                    wait_pipeline_parity(&slot->consumed, !phase);
                     slot->task = {};
                     (void)slot->ready.arrive();
                 }
@@ -959,7 +973,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                     owner * SharedQueueDepth + (local_index & kSharedQueueMask);
                 auto *const slot = &shared_task_slots[slot_index];
                 const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
-                slot->consumed.wait_parity(!phase);
+                wait_pipeline_parity(&slot->consumed, !phase);
                 slot->task = external_task_slots[task_index & capacity_mask].task;
                 (void)slot->ready.arrive();
             }
@@ -978,7 +992,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
             const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
             CopyTask task{};
             if (lane == 0) {
-                task_slot->ready.wait_parity(phase);
+                wait_pipeline_parity(&task_slot->ready, phase);
                 task = task_slot->task;
                 (void)task_slot->consumed.arrive();
             }
@@ -999,7 +1013,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
 
             if (lane == 0) {
                 auto *const completion_slot = &shared_completion_slots[slot_index];
-                completion_slot->consumed.wait_parity(!phase);
+                wait_pipeline_parity(&completion_slot->consumed, !phase);
                 completion_slot->completion.task_id = task.task_id;
                 completion_slot->completion.result = CopyTaskResult::success;
                 (void)completion_slot->ready.arrive();
@@ -1043,7 +1057,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                 owner * SharedQueueDepth + (local_index & kSharedQueueMask);
             auto *const slot = &shared_completion_slots[slot_index];
             const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
-            slot->ready.wait_parity(phase);
+            wait_pipeline_parity(&slot->ready, phase);
             external_completion_slots[completion_index & capacity_mask].completion =
                 slot->completion;
         }
