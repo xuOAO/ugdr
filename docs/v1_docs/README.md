@@ -34,3 +34,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F05-S02 Loop Worker API 串联与 Mock backend 闭环](F05_Loop_Worker_与本地_Datagram_数据路径/F05-S02_Loop_Worker_API_串联与_Mock_backend_闭环_步骤文档.md)
 - [F06 Persistent GPU Kernel 与真实 GPU Copy 功能文档](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md)
 - [F06-S01 Payload 拆分、完成聚合与 F05 全链路性能 Harness](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S01_Payload_拆分、完成聚合与_F05_全链路性能_Harness_步骤文档.md)
+- [F06-S02 Persistent Kernel 模型实验与选型](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S02_Persistent_Kernel_模型实验与选型_步骤文档.md)

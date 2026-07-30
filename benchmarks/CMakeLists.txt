@@ -48,11 +48,24 @@ target_link_libraries(ugdr_loop_worker_payload_benchmark
         ugdr_worker
 )
 
+add_executable(ugdr_persistent_copy_benchmark
+    persistent_copy_benchmark.cpp
+)
+target_include_directories(ugdr_persistent_copy_benchmark
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_persistent_copy_benchmark
+    PRIVATE
+        ugdr_gpu
+)
+
 foreach(target
         ugdr_shared_ring_benchmark
         ugdr_wr_posting_benchmark
         ugdr_queue_metadata_benchmark
-        ugdr_loop_worker_payload_benchmark)
+        ugdr_loop_worker_payload_benchmark
+        ugdr_persistent_copy_benchmark)
     target_compile_definitions(${target}
         PRIVATE
             UGDR_BENCHMARK_BUILD_TYPE="${CMAKE_BUILD_TYPE}"

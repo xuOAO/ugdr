@@ -86,6 +86,12 @@ target_link_libraries(ugdr_worker
 add_library(ugdr_gpu STATIC
     src/gpu/cuda_ipc_memory.cu
     src/gpu/gpu.cu
+    src/gpu/persistent_copy.cu
+)
+set_source_files_properties(
+    src/gpu/persistent_copy.cu
+    PROPERTIES
+        COMPILE_OPTIONS "--generate-code=arch=compute_86,code=sm_86"
 )
 target_include_directories(ugdr_gpu
     PUBLIC
