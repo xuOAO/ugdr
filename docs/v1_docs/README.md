@@ -35,3 +35,4 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F06 Persistent GPU Kernel 与真实 GPU Copy 功能文档](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md)
 - [F06-S01 Payload 拆分、完成聚合与 F05 全链路性能 Harness](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S01_Payload_拆分、完成聚合与_F05_全链路性能_Harness_步骤文档.md)
 - [F06-S02 Persistent Kernel 模型实验与选型](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S02_Persistent_Kernel_模型实验与选型_步骤文档.md)
+- [F06-S03 真实 CUDA Backend 集成与端到端验收](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S03_真实_CUDA_Backend_集成与端到端验收_步骤文档.md)
