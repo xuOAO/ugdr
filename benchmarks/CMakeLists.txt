@@ -60,6 +60,18 @@ target_link_libraries(ugdr_persistent_copy_benchmark
         ugdr_gpu
 )
 
+add_executable(ugdr_persistent_copy_latency_benchmark
+    persistent_copy_latency_benchmark.cpp
+)
+target_include_directories(ugdr_persistent_copy_latency_benchmark
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_persistent_copy_latency_benchmark
+    PRIVATE
+        ugdr_gpu
+)
+
 add_executable(ugdr_persistent_cuda_backend_benchmark
     persistent_cuda_backend_benchmark.cpp
     ${PROJECT_SOURCE_DIR}/src/api/wr_posting.cpp
@@ -83,6 +95,7 @@ foreach(target
         ugdr_queue_metadata_benchmark
         ugdr_loop_worker_payload_benchmark
         ugdr_persistent_copy_benchmark
+        ugdr_persistent_copy_latency_benchmark
         ugdr_persistent_cuda_backend_benchmark)
     target_compile_definitions(${target}
         PRIVATE
