@@ -109,7 +109,8 @@ add_library(ugdr_cuda_backend STATIC
 set_source_files_properties(
     src/gpu/persistent_copy_backend.cu
     PROPERTIES
-        COMPILE_OPTIONS "--generate-code=arch=compute_86,code=sm_86"
+        LANGUAGE CXX
+        COMPILE_FLAGS "-x c++"
 )
 target_include_directories(ugdr_cuda_backend
     PUBLIC
