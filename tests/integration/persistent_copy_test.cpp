@@ -125,15 +125,24 @@ bool common_contract_smoke() {
     config.outstanding_capacity = 2;
     config.copy_warps = 4;
     config.model = ugdr::gpu::PersistentCopyModel::warp_specialized_pipeline;
+    config.outstanding_capacity = 32;
+    config.device_batch = 16;
     config.shared_queue_depth = 8;
     if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
     }
+    config.device_batch = ugdr::gpu::kWarpSpecializedPipelineMetaBatch;
     config.copy_warps = 2;
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
+        return false;
+    }
+    config.shared_queue_depth = 16;
     if (ugdr::gpu::validate_persistent_copy_config(config) != 0) {
         return false;
     }
     config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
+    config.outstanding_capacity = 2;
+    config.device_batch = 2;
     config.copy_warps = 4;
 
     ugdr::gpu::PersistentCopyLifecycle lifecycle;
@@ -833,6 +842,15 @@ int warp_specialized_queue_smoke(std::uint32_t copy_warps, std::uint32_t device_
         return 78;
     }
     ugdr::gpu::WarpSpecializedQueue queue;
+    if (use_pipeline &&
+        (ugdr::gpu::WarpSpecializedQueue::allocate_pipeline(
+             16, copy_warps, shared_queue_depth, payload.stage_buffer_base(), &queue) != EINVAL ||
+         ugdr::gpu::WarpSpecializedQueue::allocate_pipeline(
+             capacity, 2, 8, payload.stage_buffer_base(), &queue) != EINVAL)) {
+        return 79;
+    }
+    const std::uint32_t expected_device_batch =
+        use_pipeline ? ugdr::gpu::kWarpSpecializedPipelineMetaBatch : device_batch;
     if (ugdr::gpu::WarpSpecializedQueue::allocate(3, 4, 4, 8, payload.stage_buffer_base(),
                                                   &queue) != EINVAL ||
         ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 31, 4, 8, payload.stage_buffer_base(),
@@ -847,14 +865,15 @@ int warp_specialized_queue_smoke(std::uint32_t copy_warps, std::uint32_t device_
                                                   &queue) != EINVAL ||
         ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 8, 4, payload.stage_buffer_base(),
                                                   &queue) != EINVAL ||
-        (use_pipeline ? ugdr::gpu::WarpSpecializedQueue::allocate_pipeline(
-                            capacity, copy_warps, device_batch, shared_queue_depth,
-                            payload.stage_buffer_base(), &queue)
-                      : ugdr::gpu::WarpSpecializedQueue::allocate(
-                            capacity, copy_warps, device_batch, shared_queue_depth,
-                            payload.stage_buffer_base(), &queue)) != 0 ||
+        (use_pipeline
+             ? ugdr::gpu::WarpSpecializedQueue::allocate_pipeline(
+                   capacity, copy_warps, shared_queue_depth, payload.stage_buffer_base(), &queue)
+             : ugdr::gpu::WarpSpecializedQueue::allocate(
+                   capacity, copy_warps, device_batch, shared_queue_depth,
+                   payload.stage_buffer_base(), &queue)) != 0 ||
         queue.capacity() != capacity || queue.copy_warps() != copy_warps ||
-        queue.device_batch() != device_batch || queue.shared_queue_depth() != shared_queue_depth ||
+        queue.device_batch() != expected_device_batch ||
+        queue.shared_queue_depth() != shared_queue_depth ||
         queue.host_meta_bytes() != 64 + capacity * 48 ||
         queue.shared_memory_bytes() !=
             shared_queue_depth * 80 * (use_pipeline ? copy_warps : 1) + (use_pipeline ? 0 : 64) ||
@@ -1024,13 +1043,20 @@ int main() {
         if (status != 0) {
             return status;
         }
-        if (test_case.shared_queue_depth <= 16 && test_case.copy_warps >= 2 &&
-            (test_case.copy_warps - 2) % 4 == 0) {
-            const int pipeline_status = warp_specialized_queue_smoke(
-                test_case.copy_warps, test_case.device_batch, test_case.shared_queue_depth, true);
-            if (pipeline_status != 0) {
-                return pipeline_status;
-            }
+    }
+    struct WarpSpecializedPipelineCase {
+        std::uint32_t copy_warps;
+        std::uint32_t shared_queue_depth;
+    };
+    constexpr WarpSpecializedPipelineCase pipeline_cases[]{
+        {2, 16}, {6, 8}, {10, 4}, {14, 4}, {18, 2}, {22, 2}, {26, 2}, {30, 2}, {30, 16},
+    };
+    for (const auto &test_case : pipeline_cases) {
+        const int status = warp_specialized_queue_smoke(
+            test_case.copy_warps, ugdr::gpu::kWarpSpecializedPipelineMetaBatch,
+            test_case.shared_queue_depth, true);
+        if (status != 0) {
+            return status;
         }
     }
     return 0;

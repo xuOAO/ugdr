@@ -860,20 +860,19 @@ __global__ void warp_specialized_kernel(WarpSpecializedControl *control,
     }
 }
 
-template <std::uint32_t TasksPerBatch, std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
+template <std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
 __global__ void
 warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                                  WarpSpecializedTaskSlot *external_task_slots,
                                  WarpSpecializedCompletionSlot *external_completion_slots,
                                  std::uint64_t capacity_mask, std::uint64_t stage_buffer_base) {
-    static_assert(TasksPerBatch > 0);
-    static_assert(TasksPerBatch <= 32);
     static_assert(SharedQueueDepth >= 2);
     static_assert(SharedQueueDepth <= 512);
     static_assert((SharedQueueDepth & (SharedQueueDepth - 1)) == 0);
-    static_assert(TasksPerBatch <= SharedQueueDepth);
     static_assert(CopyWarps > 0);
     static_assert(CopyWarps <= 30);
+    static_assert((kWarpSpecializedPipelineMetaBatch + CopyWarps - 1) / CopyWarps <=
+                  SharedQueueDepth);
     constexpr std::uint64_t kSharedQueueMask = SharedQueueDepth - 1;
     constexpr unsigned kFullWarp = 0xffffffffU;
     constexpr std::uint32_t kSharedSlotCount = SharedQueueDepth * CopyWarps;
@@ -905,8 +904,10 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                 std::uint64_t task_tail = system_load_acquire(&control->task_tail);
                 if (task_head < task_tail) {
                     const std::uint64_t available = task_tail - task_head;
-                    task_count = static_cast<std::uint32_t>(
-                        available < TasksPerBatch ? available : TasksPerBatch);
+                    task_count =
+                        static_cast<std::uint32_t>(available < kWarpSpecializedPipelineMetaBatch
+                                                       ? available
+                                                       : kWarpSpecializedPipelineMetaBatch);
                 } else if (system_load_acquire(&control->stop_requested) != 0) {
                     task_tail = system_load_acquire(&control->task_tail);
                     should_stop = task_head >= task_tail;
@@ -1001,8 +1002,10 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
             std::uint64_t task_tail = system_load_acquire(&control->task_tail);
             if (completion_head < task_tail) {
                 const std::uint64_t available = task_tail - completion_head;
-                completion_count = static_cast<std::uint32_t>(
-                    available < TasksPerBatch ? available : TasksPerBatch);
+                completion_count =
+                    static_cast<std::uint32_t>(available < kWarpSpecializedPipelineMetaBatch
+                                                   ? available
+                                                   : kWarpSpecializedPipelineMetaBatch);
             } else if (system_load_acquire(&control->stop_requested) != 0) {
                 task_tail = system_load_acquire(&control->task_tail);
                 should_stop = completion_head >= task_tail;
@@ -1375,7 +1378,7 @@ bool dispatch_warp_specialized_batch(std::uint32_t device_batch, WarpSpecialized
     }
 }
 
-template <std::uint32_t TasksPerBatch, std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
+template <std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
 bool launch_warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                                              WarpSpecializedTaskSlot *task_slots,
                                              WarpSpecializedCompletionSlot *completion_slots,
@@ -1383,80 +1386,40 @@ bool launch_warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                                              std::uint64_t stage_buffer_base,
                                              KernelResourceUsage *resources) {
     constexpr std::uint32_t kThreadCount = (CopyWarps + 2) * 32;
-    if (!query_kernel_resources(
-            warp_specialized_pipeline_kernel<TasksPerBatch, SharedQueueDepth, CopyWarps>,
-            kThreadCount, resources)) {
+    if (!query_kernel_resources(warp_specialized_pipeline_kernel<SharedQueueDepth, CopyWarps>,
+                                kThreadCount, resources)) {
         return false;
     }
-    warp_specialized_pipeline_kernel<TasksPerBatch, SharedQueueDepth, CopyWarps>
-        <<<1, kThreadCount>>>(control, task_slots, completion_slots, capacity_mask,
-                              stage_buffer_base);
+    warp_specialized_pipeline_kernel<SharedQueueDepth, CopyWarps><<<1, kThreadCount>>>(
+        control, task_slots, completion_slots, capacity_mask, stage_buffer_base);
     return true;
 }
 
 template <std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
-bool dispatch_warp_specialized_pipeline_batch(
-    std::uint32_t device_batch, WarpSpecializedControl *control,
-    WarpSpecializedTaskSlot *task_slots, WarpSpecializedCompletionSlot *completion_slots,
-    std::uint64_t capacity_mask, std::uint64_t stage_buffer_base, KernelResourceUsage *resources) {
-#define UGDR_LAUNCH_PIPELINE_BATCH(batch)                                                          \
-    do {                                                                                           \
-        if (!launch_warp_specialized_pipeline_kernel<batch, SharedQueueDepth, CopyWarps>(          \
-                control, task_slots, completion_slots, capacity_mask, stage_buffer_base,           \
-                resources)) {                                                                      \
-            return false;                                                                          \
-        }                                                                                          \
-    } while (false)
-    switch (device_batch) {
-    case 1:
-        UGDR_LAUNCH_PIPELINE_BATCH(1);
-        return true;
-    case 2:
-        if constexpr (SharedQueueDepth >= 2) {
-            UGDR_LAUNCH_PIPELINE_BATCH(2);
-            return true;
-        }
+bool launch_warp_specialized_pipeline_variant(WarpSpecializedControl *control,
+                                              WarpSpecializedTaskSlot *task_slots,
+                                              WarpSpecializedCompletionSlot *completion_slots,
+                                              std::uint64_t capacity_mask,
+                                              std::uint64_t stage_buffer_base,
+                                              KernelResourceUsage *resources) {
+    if constexpr ((kWarpSpecializedPipelineMetaBatch + CopyWarps - 1) / CopyWarps >
+                  SharedQueueDepth) {
         return false;
-    case 4:
-        if constexpr (SharedQueueDepth >= 4) {
-            UGDR_LAUNCH_PIPELINE_BATCH(4);
-            return true;
-        }
-        return false;
-    case 8:
-        if constexpr (SharedQueueDepth >= 8) {
-            UGDR_LAUNCH_PIPELINE_BATCH(8);
-            return true;
-        }
-        return false;
-    case 16:
-        if constexpr (SharedQueueDepth >= 16) {
-            UGDR_LAUNCH_PIPELINE_BATCH(16);
-            return true;
-        }
-        return false;
-    case 32:
-        if constexpr (SharedQueueDepth >= 32) {
-            UGDR_LAUNCH_PIPELINE_BATCH(32);
-            return true;
-        }
-        return false;
-    default:
-        return false;
+    } else {
+        return launch_warp_specialized_pipeline_kernel<SharedQueueDepth, CopyWarps>(
+            control, task_slots, completion_slots, capacity_mask, stage_buffer_base, resources);
     }
-#undef UGDR_LAUNCH_PIPELINE_BATCH
 }
 
 template <std::uint32_t SharedQueueDepth>
 bool dispatch_warp_specialized_pipeline_copy_warps(
-    std::uint32_t copy_warps, std::uint32_t device_batch, WarpSpecializedControl *control,
-    WarpSpecializedTaskSlot *task_slots, WarpSpecializedCompletionSlot *completion_slots,
-    std::uint64_t capacity_mask, std::uint64_t stage_buffer_base, KernelResourceUsage *resources) {
+    std::uint32_t copy_warps, WarpSpecializedControl *control, WarpSpecializedTaskSlot *task_slots,
+    WarpSpecializedCompletionSlot *completion_slots, std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base, KernelResourceUsage *resources) {
 #define UGDR_DISPATCH_PIPELINE_COPY_WARPS(copy_warp_count)                                         \
     case copy_warp_count:                                                                          \
-        return dispatch_warp_specialized_pipeline_batch<SharedQueueDepth, copy_warp_count>(        \
-            device_batch, control, task_slots, completion_slots, capacity_mask, stage_buffer_base, \
-            resources)
+        return launch_warp_specialized_pipeline_variant<SharedQueueDepth, copy_warp_count>(        \
+            control, task_slots, completion_slots, capacity_mask, stage_buffer_base, resources)
     switch (copy_warps) {
         UGDR_DISPATCH_PIPELINE_COPY_WARPS(2);
         UGDR_DISPATCH_PIPELINE_COPY_WARPS(6);
@@ -1483,8 +1446,8 @@ bool dispatch_warp_specialized_variant(bool use_pipeline, std::uint32_t device_b
     if (use_pipeline) {
         if constexpr (SharedQueueDepth <= 16) {
             return dispatch_warp_specialized_pipeline_copy_warps<SharedQueueDepth>(
-                copy_warps, device_batch, control, task_slots, completion_slots, capacity_mask,
-                stage_buffer_base, resources);
+                copy_warps, control, task_slots, completion_slots, capacity_mask, stage_buffer_base,
+                resources);
         }
         return false;
     }
@@ -1638,22 +1601,30 @@ bool warp_specialized_allocation_size(std::size_t capacity, std::uint32_t copy_w
 }
 
 bool warp_specialized_pipeline_allocation_size(std::size_t capacity, std::uint32_t copy_warps,
-                                               std::uint32_t device_batch,
                                                std::uint32_t shared_queue_depth,
                                                std::size_t *host_bytes,
                                                std::size_t *shared_bytes) noexcept {
-    std::size_t unused_shared_bytes = 0;
-    if (!is_supported_pipeline_copy_warps(copy_warps) || shared_queue_depth > 16 ||
-        !warp_specialized_allocation_size(capacity, copy_warps, device_batch, shared_queue_depth,
-                                          host_bytes, &unused_shared_bytes)) {
-        return false;
-    }
+    constexpr std::size_t kPerHostSlotBytes =
+        sizeof(WarpSpecializedTaskSlot) + sizeof(WarpSpecializedCompletionSlot);
     constexpr std::size_t kPerSharedSlotBytes =
         sizeof(WarpSpecializedPipelineTaskSlot) + sizeof(WarpSpecializedPipelineCompletionSlot);
+    if (!is_supported_pipeline_copy_warps(copy_warps)) {
+        return false;
+    }
+    const std::uint32_t required_queue_depth =
+        (kWarpSpecializedPipelineMetaBatch + copy_warps - 1) / copy_warps;
+    if (!is_power_of_two(capacity) || capacity < kWarpSpecializedPipelineMetaBatch ||
+        !is_supported_shared_queue_depth(shared_queue_depth) || shared_queue_depth > 16 ||
+        shared_queue_depth < required_queue_depth ||
+        capacity > (std::numeric_limits<std::size_t>::max() - sizeof(WarpSpecializedControl)) /
+                       kPerHostSlotBytes) {
+        return false;
+    }
     const std::size_t slot_count = static_cast<std::size_t>(copy_warps) * shared_queue_depth;
     if (slot_count > (std::numeric_limits<std::size_t>::max() - 64) / kPerSharedSlotBytes) {
         return false;
     }
+    *host_bytes = sizeof(WarpSpecializedControl) + capacity * kPerHostSlotBytes;
     *shared_bytes = slot_count * kPerSharedSlotBytes;
     return *shared_bytes <= 48 * 1024;
 }
@@ -1815,9 +1786,10 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
         std::size_t shared_bytes = 0;
         const bool valid =
             config.model == PersistentCopyModel::warp_specialized_pipeline
-                ? warp_specialized_pipeline_allocation_size(
-                      config.outstanding_capacity, config.copy_warps, config.device_batch,
-                      config.shared_queue_depth, &host_bytes, &shared_bytes)
+                ? config.device_batch == kWarpSpecializedPipelineMetaBatch &&
+                      warp_specialized_pipeline_allocation_size(
+                          config.outstanding_capacity, config.copy_warps, config.shared_queue_depth,
+                          &host_bytes, &shared_bytes)
                 : warp_specialized_allocation_size(config.outstanding_capacity, config.copy_warps,
                                                    config.device_batch, config.shared_queue_depth,
                                                    &host_bytes, &shared_bytes);
@@ -2858,15 +2830,14 @@ int WarpSpecializedQueue::allocate(std::size_t capacity, std::uint32_t copy_warp
 }
 
 int WarpSpecializedQueue::allocate_pipeline(std::size_t capacity, std::uint32_t copy_warps,
-                                            std::uint32_t device_batch,
                                             std::uint32_t shared_queue_depth,
                                             std::uint64_t stage_buffer_base,
                                             WarpSpecializedQueue *queue) noexcept {
     std::size_t host_bytes = 0;
     std::size_t shared_bytes = 0;
     if (queue == nullptr || !queue->empty() || stage_buffer_base == 0 ||
-        !warp_specialized_pipeline_allocation_size(
-            capacity, copy_warps, device_batch, shared_queue_depth, &host_bytes, &shared_bytes)) {
+        !warp_specialized_pipeline_allocation_size(capacity, copy_warps, shared_queue_depth,
+                                                   &host_bytes, &shared_bytes)) {
         return EINVAL;
     }
     const int status = MappedPinnedMemory::allocate(host_bytes, &queue->memory_);
@@ -2877,7 +2848,7 @@ int WarpSpecializedQueue::allocate_pipeline(std::size_t capacity, std::uint32_t 
     queue->capacity_mask_ = capacity - 1;
     queue->shared_memory_bytes_ = shared_bytes;
     queue->copy_warps_ = copy_warps;
-    queue->device_batch_ = device_batch;
+    queue->device_batch_ = kWarpSpecializedPipelineMetaBatch;
     queue->shared_queue_depth_ = shared_queue_depth;
     queue->stage_buffer_base_ = stage_buffer_base;
     return 0;

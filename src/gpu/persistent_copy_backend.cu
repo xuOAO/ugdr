@@ -386,8 +386,7 @@ int CudaPersistentCopyRuntime::start(const PersistentCudaCopyBackendConfig &conf
     }
     int status = WarpSpecializedQueue::allocate_pipeline(
         config.queue_capacity, kPersistentCudaCopyBackendCopyWarps,
-        kPersistentCudaCopyBackendDeviceBatch, kPersistentCudaCopyBackendSharedQueueDepth,
-        config.stage_buffer_base, &queue_);
+        kPersistentCudaCopyBackendSharedQueueDepth, config.stage_buffer_base, &queue_);
     if (status != 0) {
         return status;
     }

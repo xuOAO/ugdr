@@ -451,7 +451,7 @@ int run_warp_specialized(PersistentCopyConfig config, PersistentCopyResult *outp
 
     ugdr::gpu::WarpSpecializedQueue queue;
     status = use_pipeline ? ugdr::gpu::WarpSpecializedQueue::allocate_pipeline(
-                                config.outstanding_capacity, config.copy_warps, config.device_batch,
+                                config.outstanding_capacity, config.copy_warps,
                                 config.shared_queue_depth, payload.stage_buffer_base(), &queue)
                           : ugdr::gpu::WarpSpecializedQueue::allocate(
                                 config.outstanding_capacity, config.copy_warps, config.device_batch,
@@ -572,6 +572,7 @@ int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps,
         if (models[index] == PersistentCopyModel::warp_specialized) {
             case_config.shared_queue_depth = warp_queue_depth;
         } else if (models[index] == PersistentCopyModel::warp_specialized_pipeline) {
+            case_config.device_batch = ugdr::gpu::kWarpSpecializedPipelineMetaBatch;
             case_config.shared_queue_depth = pipeline_queue_depth;
         } else {
             case_config.shared_queue_depth = 0;
@@ -597,12 +598,13 @@ int run_matrix(PersistentCopyConfig config, std::uint32_t total_warps,
                 "warp_queue_depth=%u pipeline_queue_depth=%u "
                 "payload_bytes=%zu parent_wr_bytes=%zu "
                 "outstanding_capacity=%zu host_batch=%zu "
-                "device_batch=%u warmup_tasks=%llu "
+                "device_batch=%u pipeline_meta_batch=%u warmup_tasks=%llu "
                 "iterations=%llu fairness_passed=1 "
                 "correctness_passed=1\n",
                 total_warps, warp_queue_depth, pipeline_queue_depth, config.payload_bytes,
                 config.parent_wr_bytes, config.outstanding_capacity, config.host_batch,
-                config.device_batch, static_cast<unsigned long long>(config.warmup_tasks),
+                config.device_batch, ugdr::gpu::kWarpSpecializedPipelineMetaBatch,
+                static_cast<unsigned long long>(config.warmup_tasks),
                 static_cast<unsigned long long>(config.iterations));
     for (const auto &result : results) {
         print_result("matrix", result);
