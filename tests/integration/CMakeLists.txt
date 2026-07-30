@@ -177,9 +177,9 @@ target_link_libraries(ugdr_loop_worker_cuda_test
     PRIVATE
         ugdr_api
         ugdr_control
+        ugdr_cuda_backend
         ugdr_gpu
         ugdr_ipc
-        ugdr_test_support
         ugdr_worker
 )
 add_test(
