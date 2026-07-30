@@ -177,9 +177,9 @@ target_link_libraries(ugdr_loop_worker_cuda_test
     PRIVATE
         ugdr_api
         ugdr_control
+        ugdr_cuda_backend
         ugdr_gpu
         ugdr_ipc
-        ugdr_test_support
         ugdr_worker
 )
 add_test(
@@ -210,6 +210,71 @@ add_test(
 )
 set_tests_properties(
     ugdr_persistent_copy
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30
+)
+
+add_executable(ugdr_gpudirect_visibility_test
+    gpudirect_visibility_test.cpp
+)
+target_include_directories(ugdr_gpudirect_visibility_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_gpudirect_visibility_test
+    PRIVATE
+        ugdr_cuda_backend
+)
+add_test(
+    NAME ugdr_gpudirect_visibility
+    COMMAND ugdr_gpudirect_visibility_test
+)
+set_tests_properties(
+    ugdr_gpudirect_visibility
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+)
+
+add_executable(ugdr_persistent_copy_backend_lifecycle_test
+    persistent_copy_backend_lifecycle_test.cpp
+)
+target_include_directories(ugdr_persistent_copy_backend_lifecycle_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_persistent_copy_backend_lifecycle_test
+    PRIVATE
+        ugdr_cuda_backend
+)
+add_test(
+    NAME ugdr_persistent_copy_backend_lifecycle
+    COMMAND ugdr_persistent_copy_backend_lifecycle_test
+)
+set_tests_properties(
+    ugdr_persistent_copy_backend_lifecycle
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30
+)
+
+add_executable(ugdr_persistent_copy_backend_copy_test
+    persistent_copy_backend_copy_test.cpp
+)
+target_include_directories(ugdr_persistent_copy_backend_copy_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_persistent_copy_backend_copy_test
+    PRIVATE
+        ugdr_cuda_backend
+)
+add_test(
+    NAME ugdr_persistent_copy_backend_copy
+    COMMAND ugdr_persistent_copy_backend_copy_test
+)
+set_tests_properties(
+    ugdr_persistent_copy_backend_copy
     PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 30

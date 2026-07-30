@@ -195,9 +195,8 @@ class DirectAtomicQueue {
     DirectAtomicQueue(const DirectAtomicQueue &) = delete;
     DirectAtomicQueue &operator=(const DirectAtomicQueue &) = delete;
 
-    static int allocate(std::size_t capacity, std::uint32_t copy_warps,
-                        std::uint32_t device_batch, std::uint64_t stage_buffer_base,
-                        DirectAtomicQueue *queue) noexcept;
+    static int allocate(std::size_t capacity, std::uint32_t copy_warps, std::uint32_t device_batch,
+                        std::uint64_t stage_buffer_base, DirectAtomicQueue *queue) noexcept;
     int start() noexcept;
     int try_submit(const CopyTask &task) noexcept;
     int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
@@ -243,9 +242,8 @@ class DynamicShardedSpscQueue {
     DynamicShardedSpscQueue(const DynamicShardedSpscQueue &) = delete;
     DynamicShardedSpscQueue &operator=(const DynamicShardedSpscQueue &) = delete;
 
-    static int allocate(std::size_t capacity, std::uint32_t copy_warps,
-                        std::uint32_t device_batch, std::uint64_t stage_buffer_base,
-                        DynamicShardedSpscQueue *queue) noexcept;
+    static int allocate(std::size_t capacity, std::uint32_t copy_warps, std::uint32_t device_batch,
+                        std::uint64_t stage_buffer_base, DynamicShardedSpscQueue *queue) noexcept;
     int start() noexcept;
     int try_submit(const CopyTask &task) noexcept;
     int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
@@ -296,10 +294,8 @@ class StaticPartitionSpscQueue {
     StaticPartitionSpscQueue(const StaticPartitionSpscQueue &) = delete;
     StaticPartitionSpscQueue &operator=(const StaticPartitionSpscQueue &) = delete;
 
-    static int allocate(std::size_t capacity, std::uint32_t copy_warps,
-                        std::uint32_t device_batch,
-                        std::uint64_t stage_buffer_base,
-                        StaticPartitionSpscQueue *queue) noexcept;
+    static int allocate(std::size_t capacity, std::uint32_t copy_warps, std::uint32_t device_batch,
+                        std::uint64_t stage_buffer_base, StaticPartitionSpscQueue *queue) noexcept;
     int start() noexcept;
     int try_submit(const CopyTask &task) noexcept;
     int try_submit_batch(const CopyTask *tasks, std::size_t task_count,
@@ -347,17 +343,13 @@ class WarpSpecializedQueue {
     WarpSpecializedQueue(const WarpSpecializedQueue &) = delete;
     WarpSpecializedQueue &operator=(const WarpSpecializedQueue &) = delete;
 
-    static int allocate(std::size_t capacity, std::uint32_t copy_warps,
-                        std::uint32_t device_batch,
-                        std::uint32_t shared_queue_depth,
-                        std::uint64_t stage_buffer_base,
+    static int allocate(std::size_t capacity, std::uint32_t copy_warps, std::uint32_t device_batch,
+                        std::uint32_t shared_queue_depth, std::uint64_t stage_buffer_base,
                         WarpSpecializedQueue *queue) noexcept;
-    static int allocate_pipeline(
-        std::size_t capacity, std::uint32_t copy_warps,
-        std::uint32_t device_batch,
-        std::uint32_t shared_queue_depth,
-        std::uint64_t stage_buffer_base,
-        WarpSpecializedQueue *queue) noexcept;
+    static int allocate_pipeline(std::size_t capacity, std::uint32_t copy_warps,
+                                 std::uint32_t device_batch, std::uint32_t shared_queue_depth,
+                                 std::uint64_t stage_buffer_base,
+                                 WarpSpecializedQueue *queue) noexcept;
     int start() noexcept;
     int start_pipeline() noexcept;
     int try_submit(const CopyTask &task) noexcept;

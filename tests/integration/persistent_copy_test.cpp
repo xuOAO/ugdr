@@ -13,9 +13,8 @@
 
 namespace {
 
-bool kernel_resources_match(
-    const ugdr::gpu::KernelResourceUsage &resources,
-    std::size_t shared_memory_bytes) {
+bool kernel_resources_match(const ugdr::gpu::KernelResourceUsage &resources,
+                            std::size_t shared_memory_bytes) {
     return resources.shared_memory_bytes == shared_memory_bytes &&
            resources.registers_per_thread != 0 && resources.occupancy > 0.0 &&
            resources.occupancy <= 1.0;
@@ -125,12 +124,9 @@ bool common_contract_smoke() {
     config.model = ugdr::gpu::PersistentCopyModel::direct_atomic;
     config.outstanding_capacity = 2;
     config.copy_warps = 4;
-    config.model =
-        ugdr::gpu::PersistentCopyModel::
-            warp_specialized_pipeline;
+    config.model = ugdr::gpu::PersistentCopyModel::warp_specialized_pipeline;
     config.shared_queue_depth = 8;
-    if (ugdr::gpu::validate_persistent_copy_config(config) !=
-        EINVAL) {
+    if (ugdr::gpu::validate_persistent_copy_config(config) != EINVAL) {
         return false;
     }
     config.copy_warps = 2;
@@ -205,8 +201,8 @@ int gpu_resource_smoke() {
         return 11;
     }
     ugdr::gpu::MappedPinnedMemory moved = std::move(mapped);
-    if (!mapped.empty() || moved.empty() || moved.reset() != 0 || !moved.empty() ||
-        moved.reset() != 0) {
+    if (!mapped.empty() ||  // NOLINT(bugprone-use-after-move): verifies the moved-from contract.
+        moved.empty() || moved.reset() != 0 || !moved.empty() || moved.reset() != 0) {
         return 12;
     }
     for (int iteration = 0; iteration < 32; ++iteration) {
@@ -230,9 +226,8 @@ int gpu_resource_smoke() {
     }
     ugdr::gpu::CopyTask task;
     if (payload.make_task(17, payload.target_address(), payload_bytes, 0, &task) != 0 ||
-        task.task_id != 17 ||
-        task.target_address != payload.target_address() || task.length != payload_bytes ||
-        task.relative_offset != 0 ||
+        task.task_id != 17 || task.target_address != payload.target_address() ||
+        task.length != payload_bytes || task.relative_offset != 0 ||
         payload.make_task(1, payload.target_address(), payload_bytes + 1, 0, &task) != EINVAL ||
         payload.make_task(1, payload.target_address(), 2,
                           static_cast<std::uint32_t>(payload_bytes - 1), &task) != EINVAL ||
@@ -249,8 +244,7 @@ int gpu_resource_smoke() {
         offset_task.relative_offset != relative_offset) {
         return 15;
     }
-    const std::uint64_t source_address =
-        payload.stage_buffer_base() + task.relative_offset;
+    const std::uint64_t source_address = payload.stage_buffer_base() + task.relative_offset;
     if (cuMemcpyDtoD(static_cast<CUdeviceptr>(task.target_address),
                      static_cast<CUdeviceptr>(source_address), task.length) != CUDA_SUCCESS ||
         cuCtxSynchronize() != CUDA_SUCCESS) {
@@ -267,8 +261,9 @@ int gpu_resource_smoke() {
         return 18;
     }
     ugdr::gpu::PersistentCopyPayloadBuffer moved_payload = std::move(payload);
-    if (!payload.empty() || moved_payload.empty() || moved_payload.reset() != 0 ||
-        !moved_payload.empty() || moved_payload.reset() != 0) {
+    if (!payload.empty() ||  // NOLINT(bugprone-use-after-move): verifies moved-from ownership.
+        moved_payload.empty() || moved_payload.reset() != 0 || !moved_payload.empty() ||
+        moved_payload.reset() != 0) {
         return 19;
     }
     return 0;
@@ -293,7 +288,7 @@ int copy_core_matrix_smoke() {
 
     ugdr::gpu::MappedPinnedMemory access_counts_memory;
     if (ugdr::gpu::MappedPinnedMemory::allocate(sizeof(ugdr::gpu::CopyAccessCounts),
-                                                 &access_counts_memory) != 0) {
+                                                &access_counts_memory) != 0) {
         return 22;
     }
     auto *const access_counts =
@@ -314,14 +309,13 @@ int copy_core_matrix_smoke() {
                 }
                 std::memset(access_counts, 0xa5, sizeof(*access_counts));
                 if (ugdr::gpu::launch_persistent_copy_core_test(
-                        payload.stage_buffer_base(), task,
-                        access_counts_memory.device_address()) != 0 ||
+                        payload.stage_buffer_base(), task, access_counts_memory.device_address()) !=
+                        0 ||
                     cuCtxSynchronize() != CUDA_SUCCESS) {
                     return 25;
                 }
 
-                const std::uint64_t source_address =
-                    payload.stage_buffer_base() + source_offset;
+                const std::uint64_t source_address = payload.stage_buffer_base() + source_offset;
                 const std::uint64_t target_address = payload.target_address() + target_offset;
                 std::size_t expected_vector_bytes = 0;
                 if ((source_address & 15U) == (target_address & 15U)) {
@@ -378,19 +372,17 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
     ugdr::gpu::DirectAtomicQueue queue;
     if (ugdr::gpu::DirectAtomicQueue::allocate(3, 4, 4, payload.stage_buffer_base(), &queue) !=
             EINVAL ||
-        ugdr::gpu::DirectAtomicQueue::allocate(
-            capacity, 2, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::DirectAtomicQueue::allocate(capacity, 2, 4, payload.stage_buffer_base(),
+                                               &queue) != EINVAL ||
         ugdr::gpu::DirectAtomicQueue::allocate(8, 4, 16, payload.stage_buffer_base(), &queue) !=
             EINVAL ||
         ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, 3, payload.stage_buffer_base(),
                                                &queue) != EINVAL ||
         ugdr::gpu::DirectAtomicQueue::allocate(capacity, 4, device_batch,
-                                               payload.stage_buffer_base(),
-                                               &queue) != 0 ||
+                                               payload.stage_buffer_base(), &queue) != 0 ||
         queue.capacity() != capacity || queue.copy_warps() != 4 ||
-        queue.device_batch() != device_batch ||
-        queue.host_meta_bytes() != 64 + capacity * 64 || queue.start() != 0 ||
-        !queue.running() || !queue.accepting() ||
+        queue.device_batch() != device_batch || queue.host_meta_bytes() != 64 + capacity * 64 ||
+        queue.start() != 0 || !queue.running() || !queue.accepting() ||
         !kernel_resources_match(queue.kernel_resources(), 0)) {
         return 31;
     }
@@ -401,8 +393,8 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
         return 32;
     }
     if (queue.try_poll(&completion) != EAGAIN ||
-        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL ||
-        submitted_count != 0 || queue.try_submit_batch(nullptr, 0, nullptr) != EINVAL ||
+        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL || submitted_count != 0 ||
+        queue.try_submit_batch(nullptr, 0, nullptr) != EINVAL ||
         queue.try_submit_batch(invalid_batch, 2, &submitted_count) != EINVAL ||
         submitted_count != 0 || queue.accepted_tasks() != 0) {
         return 32;
@@ -459,12 +451,11 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
     if (payload.make_task(total_tasks + 1, payload.target_address(), payload_bytes, 0,
                           &overflow_task) != 0 ||
         !queue.drained() || queue.accepted_tasks() != total_tasks ||
-        queue.completed_tasks() != total_tasks ||
-        queue.host_system_atomic_operations() == 0 ||
+        queue.completed_tasks() != total_tasks || queue.host_system_atomic_operations() == 0 ||
         queue.host_system_atomic_operations() > total_tasks * 2 ||
-        (queue.host_system_atomic_operations() & 1U) != 0 ||
-        queue.request_stop() != 0 || queue.try_submit(overflow_task) != EINVAL ||
-        queue.wait() != 0 || queue.running() || queue.wait() != EINVAL) {
+        (queue.host_system_atomic_operations() & 1U) != 0 || queue.request_stop() != 0 ||
+        queue.try_submit(overflow_task) != EINVAL || queue.wait() != 0 || queue.running() ||
+        queue.wait() != EINVAL) {
         return 37;
     }
 
@@ -486,8 +477,7 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
     std::vector<bool> drained_seen(capacity, false);
     for (std::size_t index = 0; index < capacity; ++index) {
         if (queue.try_poll(&completion) != 0 || completion.task_id < 1000 ||
-            completion.task_id >= 1000 + capacity ||
-            drained_seen[completion.task_id - 1000]) {
+            completion.task_id >= 1000 + capacity || drained_seen[completion.task_id - 1000]) {
             return 41;
         }
         drained_seen[completion.task_id - 1000] = true;
@@ -501,8 +491,7 @@ int direct_atomic_queue_smoke(std::uint32_t device_batch) {
     return 0;
 }
 
-int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
-                                     std::uint32_t device_batch) {
+int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps, std::uint32_t device_batch) {
     constexpr std::size_t payload_bytes = 8192;
     constexpr std::size_t guard_bytes = 16;
     constexpr std::size_t capacity = 32;
@@ -510,45 +499,38 @@ int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
     constexpr std::size_t total_tasks = 257;
 
     ugdr::gpu::PersistentCopyPayloadBuffer payload;
-    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(
-            payload_bytes, guard_bytes, &payload) != 0 ||
+    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(payload_bytes, guard_bytes, &payload) !=
+            0 ||
         payload.prepare(seed) != 0) {
         return 43;
     }
     ugdr::gpu::DynamicShardedSpscQueue queue;
-    if (ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            3, 4, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
+    if (ugdr::gpu::DynamicShardedSpscQueue::allocate(3, 4, 4, payload.stage_buffer_base(),
+                                                     &queue) != EINVAL ||
+        ugdr::gpu::DynamicShardedSpscQueue::allocate(8, 16, 4, payload.stage_buffer_base(),
+                                                     &queue) != EINVAL ||
+        ugdr::gpu::DynamicShardedSpscQueue::allocate(capacity, 3, 4, payload.stage_buffer_base(),
+                                                     &queue) != EINVAL ||
         ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            8, 16, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            capacity, 3, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            capacity, copy_warps, 3, payload.stage_buffer_base(), &queue) !=
-            EINVAL ||
-        ugdr::gpu::DynamicShardedSpscQueue::allocate(
-            capacity, copy_warps, device_batch,
-            payload.stage_buffer_base(), &queue) != 0 ||
-        queue.capacity() != capacity ||
-        queue.lane_capacity() != capacity / copy_warps ||
-        queue.lane_count() != copy_warps ||
-        queue.device_batch() != device_batch ||
+            capacity, copy_warps, 3, payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::DynamicShardedSpscQueue::allocate(capacity, copy_warps, device_batch,
+                                                     payload.stage_buffer_base(), &queue) != 0 ||
+        queue.capacity() != capacity || queue.lane_capacity() != capacity / copy_warps ||
+        queue.lane_count() != copy_warps || queue.device_batch() != device_batch ||
         queue.host_meta_bytes() != copy_warps * 64 + capacity * 48 ||
-        queue.host_system_atomic_operations() != 0 || queue.start() != 0 ||
-        !queue.running() || !queue.accepting() ||
-        !kernel_resources_match(queue.kernel_resources(), 0)) {
+        queue.host_system_atomic_operations() != 0 || queue.start() != 0 || !queue.running() ||
+        !queue.accepting() || !kernel_resources_match(queue.kernel_resources(), 0)) {
         return 44;
     }
 
     ugdr::gpu::CopyCompletion completion;
     std::size_t submitted_count = 99;
     ugdr::gpu::CopyTask invalid_batch[2]{};
-    if (payload.make_task(1, payload.target_address(), payload_bytes, 0,
-                          &invalid_batch[0]) != 0) {
+    if (payload.make_task(1, payload.target_address(), payload_bytes, 0, &invalid_batch[0]) != 0) {
         return 45;
     }
     if (queue.try_poll(&completion) != EAGAIN ||
-        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL ||
-        submitted_count != 0 ||
+        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL || submitted_count != 0 ||
         queue.try_submit_batch(nullptr, 0, nullptr) != EINVAL ||
         queue.try_submit_batch(invalid_batch, 2, &submitted_count) != EINVAL ||
         submitted_count != 0 || queue.accepted_tasks() != 0) {
@@ -565,23 +547,20 @@ int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
         while (submitted != total_tasks) {
             const std::size_t remaining = total_tasks - submitted;
             const std::size_t requested =
-                remaining < submit_batch.size() ? remaining
-                                                : submit_batch.size();
+                remaining < submit_batch.size() ? remaining : submit_batch.size();
             for (std::size_t index = 0; index < requested; ++index) {
-                if (payload.make_task(
-                        submitted + index + 1, payload.target_address(),
-                        payload_bytes, 0, &submit_batch[index]) != 0) {
+                if (payload.make_task(submitted + index + 1, payload.target_address(),
+                                      payload_bytes, 0, &submit_batch[index]) != 0) {
                     return 46;
                 }
             }
             submitted_count = 0;
-            const int status = queue.try_submit_batch(
-                submit_batch.data(), requested, &submitted_count);
+            const int status =
+                queue.try_submit_batch(submit_batch.data(), requested, &submitted_count);
             if (status == EAGAIN) {
                 break;
             }
-            if (status != 0 || submitted_count == 0 ||
-                submitted_count > requested) {
+            if (status != 0 || submitted_count == 0 || submitted_count > requested) {
                 return 47;
             }
             submitted += submitted_count;
@@ -591,10 +570,8 @@ int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
             }
         }
         while (queue.try_poll(&completion) == 0) {
-            if (completion.task_id == 0 ||
-                completion.task_id > total_tasks ||
-                completion.result !=
-                    ugdr::gpu::CopyTaskResult::success ||
+            if (completion.task_id == 0 || completion.task_id > total_tasks ||
+                completion.result != ugdr::gpu::CopyTaskResult::success ||
                 seen[completion.task_id - 1]) {
                 return 48;
             }
@@ -609,14 +586,12 @@ int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
     }
 
     ugdr::gpu::CopyTask overflow_task;
-    if (payload.make_task(total_tasks + 1, payload.target_address(),
-                          payload_bytes, 0, &overflow_task) != 0 ||
+    if (payload.make_task(total_tasks + 1, payload.target_address(), payload_bytes, 0,
+                          &overflow_task) != 0 ||
         !queue.drained() || queue.accepted_tasks() != total_tasks ||
-        queue.completed_tasks() != total_tasks ||
-        queue.host_system_atomic_operations() != 0 ||
-        queue.request_stop() != 0 ||
-        queue.try_submit(overflow_task) != EINVAL || queue.wait() != 0 ||
-        queue.running() || queue.wait() != EINVAL) {
+        queue.completed_tasks() != total_tasks || queue.host_system_atomic_operations() != 0 ||
+        queue.request_stop() != 0 || queue.try_submit(overflow_task) != EINVAL ||
+        queue.wait() != 0 || queue.running() || queue.wait() != EINVAL) {
         return 50;
     }
 
@@ -625,38 +600,34 @@ int dynamic_sharded_spsc_queue_smoke(std::uint32_t copy_warps,
     }
     for (std::size_t index = 0; index < capacity; ++index) {
         ugdr::gpu::CopyTask task;
-        if (payload.make_task(2000 + index, payload.target_address(),
-                              payload_bytes, 0, &task) != 0 ||
+        if (payload.make_task(2000 + index, payload.target_address(), payload_bytes, 0, &task) !=
+                0 ||
             queue.try_submit(task) != 0) {
             return 52;
         }
     }
-    if (queue.try_submit(overflow_task) != EAGAIN ||
-        queue.request_stop() != 0 || queue.wait() != 0 ||
-        queue.drained()) {
+    if (queue.try_submit(overflow_task) != EAGAIN || queue.request_stop() != 0 ||
+        queue.wait() != 0 || queue.drained()) {
         return 53;
     }
     std::vector<bool> drained_seen(capacity, false);
     for (std::size_t index = 0; index < capacity; ++index) {
-        if (queue.try_poll(&completion) != 0 ||
-            completion.task_id < 2000 ||
-            completion.task_id >= 2000 + capacity ||
-            drained_seen[completion.task_id - 2000]) {
+        if (queue.try_poll(&completion) != 0 || completion.task_id < 2000 ||
+            completion.task_id >= 2000 + capacity || drained_seen[completion.task_id - 2000]) {
             return 54;
         }
         drained_seen[completion.task_id - 2000] = true;
     }
     ugdr::gpu::PayloadCheck check;
     if (!queue.drained() || queue.try_poll(&completion) != EAGAIN ||
-        payload.verify(seed, &check) != 0 || !check.payload_matches ||
-        !check.guards_intact || queue.reset() != 0 || !queue.empty()) {
+        payload.verify(seed, &check) != 0 || !check.payload_matches || !check.guards_intact ||
+        queue.reset() != 0 || !queue.empty()) {
         return 55;
     }
     return 0;
 }
 
-int static_partition_spsc_queue_smoke(std::uint32_t copy_warps,
-                                      std::uint32_t device_batch) {
+int static_partition_spsc_queue_smoke(std::uint32_t copy_warps, std::uint32_t device_batch) {
     constexpr std::size_t payload_bytes = 8192;
     constexpr std::size_t guard_bytes = 16;
     constexpr std::size_t capacity = 32;
@@ -664,43 +635,36 @@ int static_partition_spsc_queue_smoke(std::uint32_t copy_warps,
     constexpr std::size_t total_tasks = 257;
 
     ugdr::gpu::PersistentCopyPayloadBuffer payload;
-    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(
-            payload_bytes, guard_bytes, &payload) != 0 ||
+    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(payload_bytes, guard_bytes, &payload) !=
+            0 ||
         payload.prepare(seed) != 0) {
         return 56;
     }
     ugdr::gpu::StaticPartitionSpscQueue queue;
-    if (ugdr::gpu::StaticPartitionSpscQueue::allocate(
-            3, 4, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
+    if (ugdr::gpu::StaticPartitionSpscQueue::allocate(3, 4, 4, payload.stage_buffer_base(),
+                                                      &queue) != EINVAL ||
+        ugdr::gpu::StaticPartitionSpscQueue::allocate(8, 16, 4, payload.stage_buffer_base(),
+                                                      &queue) != EINVAL ||
+        ugdr::gpu::StaticPartitionSpscQueue::allocate(capacity, 3, 4, payload.stage_buffer_base(),
+                                                      &queue) != EINVAL ||
         ugdr::gpu::StaticPartitionSpscQueue::allocate(
-            8, 16, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::StaticPartitionSpscQueue::allocate(
-            capacity, 3, 4, payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::StaticPartitionSpscQueue::allocate(
-            capacity, copy_warps, 3, payload.stage_buffer_base(), &queue) !=
-            EINVAL ||
-        ugdr::gpu::StaticPartitionSpscQueue::allocate(
-            capacity, copy_warps, device_batch,
-            payload.stage_buffer_base(), &queue) != 0 ||
-        queue.capacity() != capacity ||
-        queue.partition_capacity() != capacity / copy_warps ||
-        queue.copy_warps() != copy_warps ||
-        queue.device_batch() != device_batch ||
+            capacity, copy_warps, 3, payload.stage_buffer_base(), &queue) != EINVAL ||
+        ugdr::gpu::StaticPartitionSpscQueue::allocate(capacity, copy_warps, device_batch,
+                                                      payload.stage_buffer_base(), &queue) != 0 ||
+        queue.capacity() != capacity || queue.partition_capacity() != capacity / copy_warps ||
+        queue.copy_warps() != copy_warps || queue.device_batch() != device_batch ||
         queue.host_meta_bytes() != 64 + capacity * 64 ||
-        queue.host_system_atomic_operations() != 0 || queue.start() != 0 ||
-        !queue.running() || !queue.accepting() ||
-        !kernel_resources_match(queue.kernel_resources(), 0)) {
+        queue.host_system_atomic_operations() != 0 || queue.start() != 0 || !queue.running() ||
+        !queue.accepting() || !kernel_resources_match(queue.kernel_resources(), 0)) {
         return 57;
     }
 
     ugdr::gpu::CopyCompletion completion;
     std::size_t submitted_count = 99;
     ugdr::gpu::CopyTask invalid_batch[2]{};
-    if (payload.make_task(1, payload.target_address(), payload_bytes, 0,
-                          &invalid_batch[0]) != 0 ||
+    if (payload.make_task(1, payload.target_address(), payload_bytes, 0, &invalid_batch[0]) != 0 ||
         queue.try_poll(&completion) != EAGAIN ||
-        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL ||
-        submitted_count != 0 ||
+        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL || submitted_count != 0 ||
         queue.try_submit_batch(nullptr, 0, nullptr) != EINVAL ||
         queue.try_submit_batch(invalid_batch, 2, &submitted_count) != EINVAL ||
         submitted_count != 0 || queue.accepted_tasks() != 0) {
@@ -716,23 +680,20 @@ int static_partition_spsc_queue_smoke(std::uint32_t copy_warps,
         while (submitted != total_tasks) {
             const std::size_t remaining = total_tasks - submitted;
             const std::size_t requested =
-                remaining < submit_batch.size() ? remaining
-                                                : submit_batch.size();
+                remaining < submit_batch.size() ? remaining : submit_batch.size();
             for (std::size_t index = 0; index < requested; ++index) {
-                if (payload.make_task(
-                        submitted + index + 1, payload.target_address(),
-                        payload_bytes, 0, &submit_batch[index]) != 0) {
+                if (payload.make_task(submitted + index + 1, payload.target_address(),
+                                      payload_bytes, 0, &submit_batch[index]) != 0) {
                     return 59;
                 }
             }
             submitted_count = 0;
-            const int status = queue.try_submit_batch(
-                submit_batch.data(), requested, &submitted_count);
+            const int status =
+                queue.try_submit_batch(submit_batch.data(), requested, &submitted_count);
             if (status == EAGAIN) {
                 break;
             }
-            if (status != 0 || submitted_count == 0 ||
-                submitted_count > requested) {
+            if (status != 0 || submitted_count == 0 || submitted_count > requested) {
                 return 60;
             }
             submitted += submitted_count;
@@ -743,8 +704,7 @@ int static_partition_spsc_queue_smoke(std::uint32_t copy_warps,
         }
         while (queue.try_poll(&completion) == 0) {
             if (completion.task_id != completed + 1 ||
-                completion.result !=
-                    ugdr::gpu::CopyTaskResult::success) {
+                completion.result != ugdr::gpu::CopyTaskResult::success) {
                 return 61;
             }
             ++completed;
@@ -758,16 +718,14 @@ int static_partition_spsc_queue_smoke(std::uint32_t copy_warps,
 
     ugdr::gpu::PayloadCheck check;
     if (!queue.drained() || queue.accepted_tasks() != total_tasks ||
-        queue.completed_tasks() != total_tasks ||
-        queue.host_system_atomic_operations() != 0) {
+        queue.completed_tasks() != total_tasks || queue.host_system_atomic_operations() != 0) {
         return 63;
     }
-    if (queue.request_stop() != 0 || queue.wait() != 0 ||
-        queue.running() || queue.wait() != EINVAL) {
+    if (queue.request_stop() != 0 || queue.wait() != 0 || queue.running() ||
+        queue.wait() != EINVAL) {
         return 63;
     }
-    if (payload.verify(seed, &check) != 0 || !check.payload_matches ||
-        !check.guards_intact) {
+    if (payload.verify(seed, &check) != 0 || !check.payload_matches || !check.guards_intact) {
         return 63;
     }
 
@@ -777,23 +735,21 @@ int static_partition_spsc_queue_smoke(std::uint32_t copy_warps,
         }
         for (std::size_t index = 0; index < capacity; ++index) {
             ugdr::gpu::CopyTask task;
-            if (payload.make_task(1000 + index, payload.target_address(),
-                                  payload_bytes, 0, &task) != 0 ||
+            if (payload.make_task(1000 + index, payload.target_address(), payload_bytes, 0,
+                                  &task) != 0 ||
                 queue.try_submit(task) != 0) {
                 return 65;
             }
         }
         ugdr::gpu::CopyTask overflow_task;
-        if (payload.make_task(2000, payload.target_address(),
-                              payload_bytes, 0, &overflow_task) != 0 ||
-            queue.try_submit(overflow_task) != EAGAIN ||
-            queue.request_stop() != 0 || queue.wait() != 0 ||
-            queue.drained()) {
+        if (payload.make_task(2000, payload.target_address(), payload_bytes, 0, &overflow_task) !=
+                0 ||
+            queue.try_submit(overflow_task) != EAGAIN || queue.request_stop() != 0 ||
+            queue.wait() != 0 || queue.drained()) {
             return 66;
         }
         for (std::size_t index = 0; index < capacity; ++index) {
-            if (queue.try_poll(&completion) != 0 ||
-                completion.task_id != 1000 + index) {
+            if (queue.try_poll(&completion) != 0 || completion.task_id != 1000 + index) {
                 return 67;
             }
         }
@@ -814,34 +770,29 @@ int static_partition_head_of_line_smoke() {
 
     ugdr::gpu::PersistentCopyPayloadBuffer payload;
     ugdr::gpu::MappedPinnedMemory slow_target;
-    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(
-            payload_bytes, 16, &payload) != 0 ||
+    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(payload_bytes, 16, &payload) != 0 ||
         payload.prepare(seed) != 0 ||
-        ugdr::gpu::MappedPinnedMemory::allocate(
-            payload_bytes, &slow_target) != 0) {
+        ugdr::gpu::MappedPinnedMemory::allocate(payload_bytes, &slow_target) != 0) {
         return 70;
     }
     ugdr::gpu::StaticPartitionSpscQueue queue;
-    if (ugdr::gpu::StaticPartitionSpscQueue::allocate(
-            capacity, 32, 4, payload.stage_buffer_base(), &queue) != 0 ||
+    if (ugdr::gpu::StaticPartitionSpscQueue::allocate(capacity, 32, 4, payload.stage_buffer_base(),
+                                                      &queue) != 0 ||
         queue.start() != 0) {
         return 71;
     }
 
     std::vector<ugdr::gpu::CopyTask> tasks(capacity);
-    if (payload.make_task(3000, slow_target.device_address(), 1023, 1,
-                          &tasks[0]) != 0) {
+    if (payload.make_task(3000, slow_target.device_address(), 1023, 1, &tasks[0]) != 0) {
         return 72;
     }
     for (std::size_t index = 1; index < capacity; ++index) {
-        if (payload.make_task(3000 + index, payload.target_address(), 1, 0,
-                              &tasks[index]) != 0) {
+        if (payload.make_task(3000 + index, payload.target_address(), 1, 0, &tasks[index]) != 0) {
             return 72;
         }
     }
     std::size_t submitted_count = 0;
-    if (queue.try_submit_batch(tasks.data(), tasks.size(),
-                               &submitted_count) != 0 ||
+    if (queue.try_submit_batch(tasks.data(), tasks.size(), &submitted_count) != 0 ||
         submitted_count != capacity) {
         return 73;
     }
@@ -853,14 +804,13 @@ int static_partition_head_of_line_smoke() {
             break;
         }
     }
-    if (!observed_head_of_line || queue.request_stop() != 0 ||
-        queue.wait() != 0 || queue.drained()) {
+    if (!observed_head_of_line || queue.request_stop() != 0 || queue.wait() != 0 ||
+        queue.drained()) {
         return 74;
     }
     ugdr::gpu::CopyCompletion completion;
     for (std::size_t index = 0; index < capacity; ++index) {
-        if (queue.try_poll(&completion) != 0 ||
-            completion.task_id != 3000 + index) {
+        if (queue.try_poll(&completion) != 0 || completion.task_id != 3000 + index) {
             return 75;
         }
     }
@@ -870,89 +820,60 @@ int static_partition_head_of_line_smoke() {
     return 0;
 }
 
-int warp_specialized_queue_smoke(
-    std::uint32_t copy_warps, std::uint32_t device_batch,
-    std::uint32_t shared_queue_depth,
-    bool use_pipeline) {
+int warp_specialized_queue_smoke(std::uint32_t copy_warps, std::uint32_t device_batch,
+                                 std::uint32_t shared_queue_depth, bool use_pipeline) {
     constexpr std::size_t payload_bytes = 8192;
     constexpr std::size_t capacity = 32;
-    constexpr std::uint64_t seed =
-        UINT64_C(0xa11ce5a6e5a11ce5);
+    constexpr std::uint64_t seed = UINT64_C(0xa11ce5a6e5a11ce5);
     constexpr std::size_t total_tasks = 257;
 
     ugdr::gpu::PersistentCopyPayloadBuffer payload;
-    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(
-            payload_bytes, 16, &payload) != 0 ||
+    if (ugdr::gpu::PersistentCopyPayloadBuffer::allocate(payload_bytes, 16, &payload) != 0 ||
         payload.prepare(seed) != 0) {
         return 78;
     }
     ugdr::gpu::WarpSpecializedQueue queue;
-    if (ugdr::gpu::WarpSpecializedQueue::allocate(
-            3, 4, 4, 8, payload.stage_buffer_base(),
-            &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(
-            capacity, 31, 4, 8,
-            payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(
-            capacity, 4, 3, 8,
-            payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(
-            capacity, 4, 4, 3,
-            payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(
-            capacity, 4, 1, 1,
-            payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(
-            capacity, 4, 4, 1024,
-            payload.stage_buffer_base(), &queue) != EINVAL ||
-        ugdr::gpu::WarpSpecializedQueue::allocate(
-            capacity, 4, 8, 4,
-            payload.stage_buffer_base(), &queue) != EINVAL ||
-        (use_pipeline
-             ? ugdr::gpu::WarpSpecializedQueue::
-                   allocate_pipeline(
-                       capacity, copy_warps, device_batch,
-                       shared_queue_depth,
-                       payload.stage_buffer_base(), &queue)
-             : ugdr::gpu::WarpSpecializedQueue::allocate(
-                   capacity, copy_warps, device_batch,
-                   shared_queue_depth,
-                   payload.stage_buffer_base(), &queue)) != 0 ||
-        queue.capacity() != capacity ||
-        queue.copy_warps() != copy_warps ||
-        queue.device_batch() != device_batch ||
-        queue.shared_queue_depth() != shared_queue_depth ||
+    if (ugdr::gpu::WarpSpecializedQueue::allocate(3, 4, 4, 8, payload.stage_buffer_base(),
+                                                  &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 31, 4, 8, payload.stage_buffer_base(),
+                                                  &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 3, 8, payload.stage_buffer_base(),
+                                                  &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 4, 3, payload.stage_buffer_base(),
+                                                  &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 1, 1, payload.stage_buffer_base(),
+                                                  &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 4, 1024, payload.stage_buffer_base(),
+                                                  &queue) != EINVAL ||
+        ugdr::gpu::WarpSpecializedQueue::allocate(capacity, 4, 8, 4, payload.stage_buffer_base(),
+                                                  &queue) != EINVAL ||
+        (use_pipeline ? ugdr::gpu::WarpSpecializedQueue::allocate_pipeline(
+                            capacity, copy_warps, device_batch, shared_queue_depth,
+                            payload.stage_buffer_base(), &queue)
+                      : ugdr::gpu::WarpSpecializedQueue::allocate(
+                            capacity, copy_warps, device_batch, shared_queue_depth,
+                            payload.stage_buffer_base(), &queue)) != 0 ||
+        queue.capacity() != capacity || queue.copy_warps() != copy_warps ||
+        queue.device_batch() != device_batch || queue.shared_queue_depth() != shared_queue_depth ||
         queue.host_meta_bytes() != 64 + capacity * 48 ||
         queue.shared_memory_bytes() !=
-            shared_queue_depth * 80 *
-                    (use_pipeline ? copy_warps : 1) +
-                (use_pipeline ? 0 : 64) ||
+            shared_queue_depth * 80 * (use_pipeline ? copy_warps : 1) + (use_pipeline ? 0 : 64) ||
         queue.host_system_atomic_operations() != 0 ||
-        (use_pipeline ? queue.start_pipeline()
-                      : queue.start()) != 0 ||
-        !queue.running() ||
+        (use_pipeline ? queue.start_pipeline() : queue.start()) != 0 || !queue.running() ||
         !queue.accepting() ||
-        !kernel_resources_match(queue.kernel_resources(),
-                                queue.shared_memory_bytes())) {
+        !kernel_resources_match(queue.kernel_resources(), queue.shared_memory_bytes())) {
         return 79;
     }
 
     ugdr::gpu::CopyCompletion completion;
     std::size_t submitted_count = 99;
     ugdr::gpu::CopyTask invalid_batch[2]{};
-    if (payload.make_task(
-            1, payload.target_address(), payload_bytes, 0,
-            &invalid_batch[0]) != 0 ||
+    if (payload.make_task(1, payload.target_address(), payload_bytes, 0, &invalid_batch[0]) != 0 ||
         queue.try_poll(&completion) != EAGAIN ||
-        queue.try_submit_batch(
-            nullptr, 1, &submitted_count) != EINVAL ||
-        submitted_count != 0 ||
-        queue.try_submit_batch(nullptr, 0, nullptr) !=
-            EINVAL ||
-        queue.try_submit_batch(
-            invalid_batch, 2, &submitted_count) != EINVAL ||
-        submitted_count != 0 ||
-        queue.accepted_tasks() != 0) {
+        queue.try_submit_batch(nullptr, 1, &submitted_count) != EINVAL || submitted_count != 0 ||
+        queue.try_submit_batch(nullptr, 0, nullptr) != EINVAL ||
+        queue.try_submit_batch(invalid_batch, 2, &submitted_count) != EINVAL ||
+        submitted_count != 0 || queue.accepted_tasks() != 0) {
         return 80;
     }
 
@@ -963,30 +884,22 @@ int warp_specialized_queue_smoke(
     while (completed != total_tasks) {
         bool progressed = false;
         while (submitted != total_tasks) {
-            const std::size_t remaining =
-                total_tasks - submitted;
+            const std::size_t remaining = total_tasks - submitted;
             const std::size_t requested =
-                remaining < submit_batch.size()
-                    ? remaining
-                    : submit_batch.size();
-            for (std::size_t index = 0;
-                 index < requested; ++index) {
-                if (payload.make_task(
-                        submitted + index + 1,
-                        payload.target_address(), payload_bytes,
-                        0, &submit_batch[index]) != 0) {
+                remaining < submit_batch.size() ? remaining : submit_batch.size();
+            for (std::size_t index = 0; index < requested; ++index) {
+                if (payload.make_task(submitted + index + 1, payload.target_address(),
+                                      payload_bytes, 0, &submit_batch[index]) != 0) {
                     return 81;
                 }
             }
             submitted_count = 0;
-            const int status = queue.try_submit_batch(
-                submit_batch.data(), requested,
-                &submitted_count);
+            const int status =
+                queue.try_submit_batch(submit_batch.data(), requested, &submitted_count);
             if (status == EAGAIN) {
                 break;
             }
-            if (status != 0 || submitted_count == 0 ||
-                submitted_count > requested) {
+            if (status != 0 || submitted_count == 0 || submitted_count > requested) {
                 return 82;
             }
             submitted += submitted_count;
@@ -997,8 +910,7 @@ int warp_specialized_queue_smoke(
         }
         while (queue.try_poll(&completion) == 0) {
             if (completion.task_id != completed + 1 ||
-                completion.result !=
-                    ugdr::gpu::CopyTaskResult::success) {
+                completion.result != ugdr::gpu::CopyTaskResult::success) {
                 return 83;
             }
             ++completed;
@@ -1011,49 +923,37 @@ int warp_specialized_queue_smoke(
     }
 
     ugdr::gpu::PayloadCheck check;
-    if (!queue.drained() ||
-        queue.accepted_tasks() != total_tasks ||
-        queue.completed_tasks() != total_tasks ||
-        queue.request_stop() != 0 ||
-        queue.wait() != 0 || queue.running() ||
-        queue.wait() != EINVAL ||
-        payload.verify(seed, &check) != 0 ||
+    if (!queue.drained() || queue.accepted_tasks() != total_tasks ||
+        queue.completed_tasks() != total_tasks || queue.request_stop() != 0 || queue.wait() != 0 ||
+        queue.running() || queue.wait() != EINVAL || payload.verify(seed, &check) != 0 ||
         !check.payload_matches || !check.guards_intact) {
         return 85;
     }
 
-    if ((use_pipeline ? queue.start_pipeline()
-                      : queue.start()) != 0) {
+    if ((use_pipeline ? queue.start_pipeline() : queue.start()) != 0) {
         return 86;
     }
     for (std::size_t index = 0; index < capacity; ++index) {
         ugdr::gpu::CopyTask task;
-        if (payload.make_task(
-                1000 + index, payload.target_address(),
-                payload_bytes, 0, &task) != 0 ||
+        if (payload.make_task(1000 + index, payload.target_address(), payload_bytes, 0, &task) !=
+                0 ||
             queue.try_submit(task) != 0) {
             return 87;
         }
     }
     ugdr::gpu::CopyTask overflow_task;
-    if (payload.make_task(
-            2000, payload.target_address(), payload_bytes,
-            0, &overflow_task) != 0 ||
-        queue.try_submit(overflow_task) != EAGAIN ||
-        queue.request_stop() != 0 || queue.wait() != 0 ||
-        queue.drained()) {
+    if (payload.make_task(2000, payload.target_address(), payload_bytes, 0, &overflow_task) != 0 ||
+        queue.try_submit(overflow_task) != EAGAIN || queue.request_stop() != 0 ||
+        queue.wait() != 0 || queue.drained()) {
         return 88;
     }
     for (std::size_t index = 0; index < capacity; ++index) {
-        if (queue.try_poll(&completion) != 0 ||
-            completion.task_id != 1000 + index ||
-            completion.result !=
-                ugdr::gpu::CopyTaskResult::success) {
+        if (queue.try_poll(&completion) != 0 || completion.task_id != 1000 + index ||
+            completion.result != ugdr::gpu::CopyTaskResult::success) {
             return 89;
         }
     }
-    if (!queue.drained() || queue.reset() != 0 ||
-        !queue.empty()) {
+    if (!queue.drained() || queue.reset() != 0 || !queue.empty()) {
         return 90;
     }
     return 0;
@@ -1081,8 +981,7 @@ int main() {
         }
     }
     for (const std::uint32_t device_batch : device_batches) {
-        const int status =
-            dynamic_sharded_spsc_queue_smoke(4, device_batch);
+        const int status = dynamic_sharded_spsc_queue_smoke(4, device_batch);
         if (status != 0) {
             return status;
         }
@@ -1095,21 +994,18 @@ int main() {
         }
     }
     for (const std::uint32_t device_batch : device_batches) {
-        const int status =
-            static_partition_spsc_queue_smoke(4, device_batch);
+        const int status = static_partition_spsc_queue_smoke(4, device_batch);
         if (status != 0) {
             return status;
         }
     }
     for (const std::uint32_t copy_warps : dynamic_copy_warps) {
-        const int status =
-            static_partition_spsc_queue_smoke(copy_warps, 4);
+        const int status = static_partition_spsc_queue_smoke(copy_warps, 4);
         if (status != 0) {
             return status;
         }
     }
-    const int head_of_line_status =
-        static_partition_head_of_line_smoke();
+    const int head_of_line_status = static_partition_head_of_line_smoke();
     if (head_of_line_status != 0) {
         return head_of_line_status;
     }
@@ -1119,33 +1015,19 @@ int main() {
         std::uint32_t shared_queue_depth;
     };
     constexpr WarpSpecializedCase warp_specialized_cases[]{
-        {1, 1, 2},
-        {4, 2, 2},
-        {2, 2, 4},
-        {4, 4, 8},
-        {6, 8, 16},
-        {16, 8, 32},
-        {10, 8, 64},
-        {14, 8, 128},
-        {18, 8, 256},
-        {22, 8, 512},
-        {30, 32, 32},
+        {1, 1, 2},   {4, 2, 2},    {2, 2, 4},    {4, 4, 8},    {6, 8, 16},   {16, 8, 32},
+        {10, 8, 64}, {14, 8, 128}, {18, 8, 256}, {22, 8, 512}, {30, 32, 32},
     };
     for (const auto &test_case : warp_specialized_cases) {
         const int status = warp_specialized_queue_smoke(
-            test_case.copy_warps, test_case.device_batch,
-            test_case.shared_queue_depth, false);
+            test_case.copy_warps, test_case.device_batch, test_case.shared_queue_depth, false);
         if (status != 0) {
             return status;
         }
-        if (test_case.shared_queue_depth <= 16 &&
-            test_case.copy_warps >= 2 &&
+        if (test_case.shared_queue_depth <= 16 && test_case.copy_warps >= 2 &&
             (test_case.copy_warps - 2) % 4 == 0) {
-            const int pipeline_status =
-                warp_specialized_queue_smoke(
-                    test_case.copy_warps,
-                    test_case.device_batch,
-                    test_case.shared_queue_depth, true);
+            const int pipeline_status = warp_specialized_queue_smoke(
+                test_case.copy_warps, test_case.device_batch, test_case.shared_queue_depth, true);
             if (pipeline_status != 0) {
                 return pipeline_status;
             }

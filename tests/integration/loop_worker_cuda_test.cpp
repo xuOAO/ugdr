@@ -1,7 +1,7 @@
 #include "control/qp.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
+#include "gpu/persistent_copy_backend.hpp"
 #include "ipc/ipc.hpp"
-#include "support/loop_worker_fixture.hpp"
 #include "ugdr/api.hpp"
 #include "worker/local_transport.hpp"
 #include "worker/worker.hpp"
@@ -27,13 +27,34 @@ namespace {
 
 class LoopDataService final : public ugdr::control::ControlService {
   public:
-    LoopDataService() : service(memory_backend), transport(8, 8), backend(8) {
+    LoopDataService() : service(memory_backend), transport(8, 8) {
     }
 
     ugdr::control::ControlServiceResult
     handle(ugdr::ipc::SessionId session_id, ugdr::control::DecodedControlRequest request) override {
         const auto method = static_cast<ugdr::control::ControlMethod>(request.value.method);
+        ugdr::gpu::ExportedCudaMemory source_registration;
+        const bool registering_stage_buffer =
+            method == ugdr::control::ControlMethod::register_mr &&
+            request.value.access == ugdr::control::kAccessLocalWrite &&
+            ugdr::control::decode_mr_registration(request.value.opaque, request.value.length,
+                                                  &source_registration) == 0;
+        const std::uint64_t registration_pd = request.value.object_identity;
         auto result = service.handle(session_id, std::move(request));
+        if (result.response.status == 0 && registering_stage_buffer) {
+            ugdr::control::MrRegistrationResult registration_result;
+            std::uint64_t daemon_address = 0;
+            if (ugdr::control::decode_mr_registration_result(result.response.opaque,
+                                                             &registration_result) != 0 ||
+                service.resolve_lkey(session_id, registration_pd, registration_result.lkey,
+                                     source_registration.client_address, source_registration.length,
+                                     &daemon_address) != 0) {
+                backend_status = EPROTO;
+            } else {
+                stage_buffer_base = daemon_address;
+                stage_buffer_bytes = source_registration.length;
+            }
+        }
         if (result.response.status == 0 && method == ugdr::control::ControlMethod::connect_qp) {
             ++connected_qps;
             make_workers_if_ready();
@@ -46,31 +67,42 @@ class LoopDataService final : public ugdr::control::ControlService {
     }
 
     void progress(std::size_t *tokens) {
+        if (service.qp_count() == 0) {
+            progress_backend_shutdown();
+            return;
+        }
         if (requester == nullptr || responder == nullptr || service.qp_count() != 2) {
+            return;
+        }
+        if (*tokens != 0) {
+            progress_enabled = true;
+            *tokens = 0;
+        }
+        if (!progress_enabled) {
             return;
         }
         (void)requester->progress_once();
         (void)responder->progress_once();
-        if (*tokens != 0 && backend.progress_once()) {
-            --*tokens;
-        }
         (void)responder->progress_once();
         (void)requester->progress_once();
     }
 
-    [[nodiscard]] bool ready() const noexcept {
-        return requester != nullptr && responder != nullptr;
+    [[nodiscard]] bool finished() const noexcept {
+        return backend_status == 0 &&
+               backend.state() == ugdr::gpu::PersistentCudaCopyBackendState::stopped &&
+               requester != nullptr && responder != nullptr && service.qp_count() == 0 &&
+               service.cq_count() == 0 && service.mr_count() == 0 && service.pd_count() == 0 &&
+               service.context_count() == 0;
     }
 
-    [[nodiscard]] bool finished() const noexcept {
-        return ready() && service.qp_count() == 0 && service.cq_count() == 0 &&
-               service.mr_count() == 0 && service.pd_count() == 0 && service.context_count() == 0;
+    [[nodiscard]] int status() const noexcept {
+        return backend_status;
     }
 
     ugdr::gpu::RuntimeCudaIpcMemoryBackend memory_backend;
     ugdr::control::QpService service;
     ugdr::worker::LocalTransport transport;
-    ugdr::test::MockGpuBackend backend;
+    ugdr::gpu::PersistentCudaCopyBackend backend;
 
   private:
     void make_workers_if_ready() {
@@ -88,13 +120,51 @@ class LoopDataService final : public ugdr::control::ControlService {
         if (found != qp_nums.size()) {
             return;
         }
+        if (stage_buffer_base == 0 || stage_buffer_bytes == 0) {
+            backend_status = EINVAL;
+            return;
+        }
+        ugdr::gpu::PersistentCudaCopyBackendConfig config;
+        config.device_ordinal = 0;
+        config.stage_buffer_base = stage_buffer_base;
+        config.stage_buffer_bytes = stage_buffer_bytes;
+        config.queue_capacity = 64;
+        config.max_batch_delay_nanoseconds = 50'000;
+        backend_status = backend.start(config);
+        if (backend_status != 0) {
+            return;
+        }
         requester = std::make_unique<ugdr::worker::LoopWorker>(
             service, qp_nums[0], transport, backend, ugdr::worker::LoopWorkerRole::requester);
         responder = std::make_unique<ugdr::worker::LoopWorker>(
             service, qp_nums[1], transport, backend, ugdr::worker::LoopWorkerRole::responder);
     }
 
+    void progress_backend_shutdown() {
+        if (backend.state() == ugdr::gpu::PersistentCudaCopyBackendState::accepting) {
+            const int status = backend.request_stop();
+            if (status != 0) {
+                backend_status = status;
+                return;
+            }
+        }
+        if (backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::draining) {
+            return;
+        }
+        ugdr::worker::BackendCompletion completion;
+        while (backend.try_pop_completion(completion)) {
+        }
+        const int status = backend.wait();
+        if (status != 0 && status != EAGAIN) {
+            backend_status = status;
+        }
+    }
+
     int connected_qps = 0;
+    int backend_status = 0;
+    std::uint64_t stage_buffer_base = 0;
+    std::uint64_t stage_buffer_bytes = 0;
+    bool progress_enabled = false;
     std::unique_ptr<ugdr::worker::LoopWorker> requester;
     std::unique_ptr<ugdr::worker::LoopWorker> responder;
 };
@@ -133,6 +203,9 @@ int child_main(const std::string &socket_path, int ready_fd, int progress_fd) {
             return 24;
         }
         data.progress(&progress_tokens);
+        if (data.status() != 0) {
+            return 26;
+        }
         if (data.finished()) {
             return 0;
         }
@@ -370,6 +443,65 @@ int main() {
                 result = 12;
                 break;
             }
+        }
+        if (result != 0) {
+            break;
+        }
+
+        ugdr_recv_wr unused_receive{};
+        unused_receive.wr_id = 901;
+        ugdr_recv_wr *bad_unused_receive = nullptr;
+        ugdr_sge unaligned_sge{
+            static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(source)) + 3, 37,
+            source_mr->lkey};
+        ugdr_send_wr unsignaled_write{};
+        unsignaled_write.wr_id = 801;
+        unsignaled_write.sg_list = &unaligned_sge;
+        unsignaled_write.num_sge = 1;
+        unsignaled_write.opcode = UGDR_WR_RDMA_WRITE;
+        unsignaled_write.wr.rdma.remote_addr =
+            static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(target)) + 129;
+        unsignaled_write.wr.rdma.rkey = target_mr->rkey;
+        ugdr_send_wr *bad_unsignaled_write = nullptr;
+        if (ugdr_post_recv(responder, &unused_receive, &bad_unused_receive) != 0 ||
+            bad_unused_receive != nullptr ||
+            ugdr_post_send(requester, &unsignaled_write, &bad_unsignaled_write) != 0 ||
+            bad_unsignaled_write != nullptr) {
+            result = 15;
+            break;
+        }
+
+        bool unaligned_copy_complete = false;
+        for (int iteration = 0; iteration < 5000; ++iteration) {
+            if (cudaMemcpy(observed.data(), target, observed.size(), cudaMemcpyDeviceToHost) !=
+                cudaSuccess) {
+                result = 16;
+                break;
+            }
+            unaligned_copy_complete = true;
+            for (std::size_t index = 0; index < unaligned_sge.length; ++index) {
+                if (observed[129 + index] != source_data[3 + index]) {
+                    unaligned_copy_complete = false;
+                    break;
+                }
+            }
+            if (unaligned_copy_complete) {
+                break;
+            }
+            ::usleep(1000);
+        }
+        if (result != 0 || !unaligned_copy_complete) {
+            if (result == 0) {
+                result = 17;
+            }
+            break;
+        }
+        ::usleep(20000);
+        ugdr_wc unexpected{};
+        if (ugdr_poll_cq(send_cq, 1, &unexpected) != 0 ||
+            ugdr_poll_cq(receive_cq, 1, &unexpected) != 0) {
+            result = 18;
+            break;
         }
     } while (false);
 

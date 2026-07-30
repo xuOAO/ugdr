@@ -172,6 +172,22 @@ add_test(
     COMMAND ugdr_loop_worker_test
 )
 
+add_executable(ugdr_persistent_copy_backend_test
+    persistent_copy_backend_test.cpp
+)
+target_include_directories(ugdr_persistent_copy_backend_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_persistent_copy_backend_test
+    PRIVATE
+        ugdr_cuda_backend
+)
+add_test(
+    NAME ugdr_persistent_copy_backend
+    COMMAND ugdr_persistent_copy_backend_test
+)
+
 add_executable(ugdr_api_contract_c
     api_contract_c_test.c
 )
