@@ -1,6 +1,7 @@
 #include "gpu/persistent_copy.hpp"
 #include "gpu/persistent_copy_backend.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -128,10 +129,12 @@ class FakeVisibilityGate final : public GpuDirectVisibilityGate {
 class FakeClock final : public PersistentCopyClock {
   public:
     std::uint64_t now_nanoseconds() noexcept override {
+        ++calls;
         return now;
     }
 
     std::uint64_t now = 0;
+    std::size_t calls = 0;
 };
 
 ugdr::gpu::PersistentCudaCopyBackendConfig valid_config() {
@@ -568,6 +571,61 @@ int backend_backpressure_test() {
     return 0;
 }
 
+int backend_explicit_batch_flush_test() {
+    auto config = valid_config();
+    config.queue_capacity = 64;
+    FakePersistentCopyQueue runtime;
+    FakeVisibilityGate visibility;
+    FakeClock clock;
+    clock.now = 100;
+    ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+    if (backend.start(config) != 0 || !backend.try_submit(valid_request(0)) ||
+        !runtime.submitted.empty() || !backend.flush_submissions() ||
+        runtime.submitted.size() != 1 || visibility.flush_calls != 1) {
+        return 1;
+    }
+    runtime.completions.push_back({runtime.submitted.front().task_id, CopyTaskResult::success});
+    BackendCompletion completion;
+    if (!backend.try_pop_completion(completion) || completion.parent_request_id != 1000 ||
+        backend.request_stop() != 0 || backend.wait() != 0) {
+        return 2;
+    }
+    return 0;
+}
+
+int backend_batch_api_test() {
+    auto config = valid_config();
+    config.queue_capacity = 64;
+    FakePersistentCopyQueue runtime;
+    FakeVisibilityGate visibility;
+    FakeClock clock;
+    clock.now = 100;
+    ugdr::gpu::PersistentCudaCopyBackend backend(&runtime, &visibility, &clock);
+    const std::array requests{valid_request(0), valid_request(1)};
+    if (backend.start(config) != 0) {
+        return 1;
+    }
+    clock.calls = 0;
+    if (backend.try_submit_batch(requests.data(), requests.size()) != requests.size() ||
+        clock.calls != 1 || !runtime.submitted.empty() || !backend.flush_submissions() ||
+        runtime.submitted.size() != requests.size()) {
+        return 2;
+    }
+    for (const CopyTask &task : runtime.submitted) {
+        runtime.completions.push_back({task.task_id, CopyTaskResult::success});
+    }
+    std::array<BackendCompletion, 2> completions{};
+    clock.calls = 0;
+    if (backend.try_pop_completion_batch(completions.data(), completions.size()) !=
+            completions.size() ||
+        clock.calls != 1 || completions[0].parent_request_id != 1000 ||
+        completions[1].parent_request_id != 1001 || backend.request_stop() != 0 ||
+        backend.wait() != 0) {
+        return 3;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -610,6 +668,14 @@ int main() {
     const int backpressure_status = backend_backpressure_test();
     if (backpressure_status != 0) {
         return 190 + backpressure_status;
+    }
+    const int explicit_flush_status = backend_explicit_batch_flush_test();
+    if (explicit_flush_status != 0) {
+        return 210 + explicit_flush_status;
+    }
+    const int batch_api_status = backend_batch_api_test();
+    if (batch_api_status != 0) {
+        return 230 + batch_api_status;
     }
     return 0;
 }

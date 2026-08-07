@@ -17,6 +17,17 @@ bool ScriptedCopyBackend::try_submit(const worker::BackendRequest &request) {
     return true;
 }
 
+std::size_t ScriptedCopyBackend::try_submit_batch(const worker::BackendRequest *requests,
+                                                  std::size_t request_count) {
+    ++submit_batch_count_;
+    return CopyBackend::try_submit_batch(requests, request_count);
+}
+
+bool ScriptedCopyBackend::flush_submissions() {
+    ++flush_count_;
+    return true;
+}
+
 bool ScriptedCopyBackend::try_pop_completion(worker::BackendCompletion &completion) {
     if (completions_.empty()) {
         return false;
@@ -24,6 +35,12 @@ bool ScriptedCopyBackend::try_pop_completion(worker::BackendCompletion &completi
     completion = completions_.front();
     completions_.pop_front();
     return true;
+}
+
+std::size_t ScriptedCopyBackend::try_pop_completion_batch(worker::BackendCompletion *completions,
+                                                          std::size_t completion_capacity) {
+    ++completion_batch_count_;
+    return CopyBackend::try_pop_completion_batch(completions, completion_capacity);
 }
 
 bool ScriptedCopyBackend::progress_once(worker::DatagramResult result,
@@ -60,6 +77,18 @@ void ScriptedCopyBackend::set_capacity(std::size_t capacity) noexcept {
 
 std::size_t ScriptedCopyBackend::accepted_count() const noexcept {
     return accepted_.size();
+}
+
+std::size_t ScriptedCopyBackend::submit_batch_count() const noexcept {
+    return submit_batch_count_;
+}
+
+std::size_t ScriptedCopyBackend::completion_batch_count() const noexcept {
+    return completion_batch_count_;
+}
+
+std::size_t ScriptedCopyBackend::flush_count() const noexcept {
+    return flush_count_;
 }
 
 const worker::BackendRequest *ScriptedCopyBackend::front_request() const noexcept {

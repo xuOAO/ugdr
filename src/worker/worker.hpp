@@ -5,6 +5,7 @@
 #include "worker/copy_backend.hpp"
 #include "worker/local_transport.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -47,6 +48,8 @@ class LoopWorker {
     bool progress_once();
 
   private:
+    static constexpr std::size_t kBackendBatchCapacity = 64;
+
     struct SourceSegment {
         std::uint64_t daemon_address = 0;
         std::uint32_t length = 0;
@@ -101,7 +104,8 @@ class LoopWorker {
         std::uint32_t byte_length = 0;
     };
 
-    bool try_backend_completion(const control::WorkerQpView &view);
+    bool try_backend_completions(const control::WorkerQpView &view);
+    bool try_flush_backend_requests();
     bool try_parent_response(const control::WorkerQpView &view);
     bool try_response(const control::WorkerQpView &view);
     bool try_request(const control::WorkerQpView &view);
@@ -124,6 +128,8 @@ class LoopWorker {
     std::optional<PendingSend> pending_send_;
     std::optional<RequestDatagram> pending_request_;
     std::optional<ResponseDatagram> pending_response_;
+    std::array<BackendRequest, kBackendBatchCapacity> pending_backend_requests_{};
+    std::size_t pending_backend_request_count_ = 0;
 };
 
 }  // namespace ugdr::worker

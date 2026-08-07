@@ -2,6 +2,7 @@
 
 #include <cuda.h>
 #include <cuda/barrier>
+#include <cuda/std/chrono>
 #include <cuda_runtime_api.h>
 
 #include <cerrno>
@@ -313,6 +314,19 @@ struct alignas(16) WarpSpecializedSharedCompletionSlot {
 };
 
 using BlockBarrier = cuda::barrier<cuda::thread_scope_block>;
+
+template <std::uint32_t SleepNanoseconds>
+__device__ __forceinline__ void wait_parity_with_fixed_sleep(BlockBarrier *barrier,
+                                                             bool phase) noexcept {
+    static_assert(SleepNanoseconds > 0);
+    while (!barrier->try_wait_parity_for(phase, cuda::std::chrono::nanoseconds::zero())) {
+        __nanosleep(SleepNanoseconds);
+    }
+}
+
+__device__ __forceinline__ void wait_pipeline_parity(BlockBarrier *barrier, bool phase) noexcept {
+    wait_parity_with_fixed_sleep<64>(barrier, phase);
+}
 
 struct alignas(16) WarpSpecializedPipelineTaskSlot {
     CopyTask task;
@@ -634,18 +648,15 @@ __global__ void static_partition_spsc_kernel(StaticPartitionSpscControl *control
     }
 }
 
-template <std::uint32_t TasksPerBatch, std::uint32_t SharedQueueDepth, std::uint32_t CopyClaimBatch>
+template <std::uint32_t SharedQueueDepth, std::uint32_t CopyClaimBatch>
 __global__ void warp_specialized_kernel(WarpSpecializedControl *control,
                                         WarpSpecializedTaskSlot *external_task_slots,
                                         WarpSpecializedCompletionSlot *external_completion_slots,
                                         std::uint64_t capacity_mask, std::uint32_t copy_warps,
                                         std::uint64_t stage_buffer_base) {
-    static_assert(TasksPerBatch > 0);
-    static_assert(TasksPerBatch <= 32);
     static_assert(SharedQueueDepth >= 2);
-    static_assert(SharedQueueDepth <= 512);
+    static_assert(SharedQueueDepth <= 16);
     static_assert((SharedQueueDepth & (SharedQueueDepth - 1)) == 0);
-    static_assert(TasksPerBatch <= SharedQueueDepth);
     static_assert(CopyClaimBatch > 0);
     static_assert(CopyClaimBatch <= SharedQueueDepth);
     constexpr std::uint64_t kSharedQueueMask = SharedQueueDepth - 1;
@@ -681,8 +692,9 @@ __global__ void warp_specialized_kernel(WarpSpecializedControl *control,
                 std::uint64_t task_tail = system_load_acquire(&control->task_tail);
                 if (task_head < task_tail) {
                     const std::uint64_t available = task_tail - task_head;
-                    task_count = static_cast<std::uint32_t>(
-                        available < TasksPerBatch ? available : TasksPerBatch);
+                    task_count = static_cast<std::uint32_t>(available < kWarpSpecializedMetaBatch
+                                                                ? available
+                                                                : kWarpSpecializedMetaBatch);
                 } else if (system_load_acquire(&control->stop_requested) != 0) {
                     task_tail = system_load_acquire(&control->task_tail);
                     should_stop = task_head >= task_tail;
@@ -703,21 +715,37 @@ __global__ void warp_specialized_kernel(WarpSpecializedControl *control,
                 continue;
             }
 
+            CopyTask lane_task{};
             if (lane < task_count) {
                 const std::uint64_t task_index = task_head + lane;
-                auto *const shared_slot = &shared_task_slots[task_index & kSharedQueueMask];
-                while (shared_atomic_load(&shared_slot->sequence) != task_index) {
-                    __nanosleep(64);
+                lane_task = external_task_slots[task_index & capacity_mask].task;
+            }
+#pragma unroll
+            for (std::uint32_t wave_base = 0; wave_base < kWarpSpecializedMetaBatch;
+                 wave_base += SharedQueueDepth) {
+                if (wave_base >= task_count) {
+                    break;
                 }
-                shared_slot->task = external_task_slots[task_index & capacity_mask].task;
-                __threadfence_block();
-                shared_atomic_store(&shared_slot->sequence, task_index + 1);
+                const std::uint32_t wave_end = wave_base + SharedQueueDepth < task_count
+                                                   ? wave_base + SharedQueueDepth
+                                                   : task_count;
+                if (lane >= wave_base && lane < wave_end) {
+                    const std::uint64_t task_index = task_head + lane;
+                    auto *const shared_slot = &shared_task_slots[task_index & kSharedQueueMask];
+                    while (shared_atomic_load(&shared_slot->sequence) != task_index) {
+                        __nanosleep(64);
+                    }
+                    shared_slot->task = lane_task;
+                    __threadfence_block();
+                    shared_atomic_store(&shared_slot->sequence, task_index + 1);
+                }
+                __syncwarp();
+                if (lane == 0) {
+                    shared_atomic_store(&shared_control->task_publish, task_head + wave_end);
+                }
+                __syncwarp();
             }
-            __syncwarp();
             task_head += task_count;
-            if (lane == 0) {
-                shared_atomic_store(&shared_control->task_publish, task_head);
-            }
         }
     }
 
@@ -796,43 +824,24 @@ __global__ void warp_specialized_kernel(WarpSpecializedControl *control,
 
     std::uint64_t completion_head = 0;
     while (true) {
-        std::uint32_t completion_limit = 0;
         std::uint32_t completion_count = 0;
         bool should_stop = false;
         if (lane == 0) {
-            const std::uint64_t task_publish = shared_atomic_load(&shared_control->task_publish);
-            const std::uint64_t available = task_publish - completion_head;
-            completion_limit =
-                static_cast<std::uint32_t>(available < TasksPerBatch ? available : TasksPerBatch);
-            should_stop = shared_atomic_load(&shared_control->ingress_done) != 0 &&
-                          completion_head >= task_publish;
+            std::uint64_t task_tail = system_load_acquire(&control->task_tail);
+            if (completion_head < task_tail) {
+                const std::uint64_t available = task_tail - completion_head;
+                completion_count = static_cast<std::uint32_t>(
+                    available < kWarpSpecializedMetaBatch ? available : kWarpSpecializedMetaBatch);
+            } else if (system_load_acquire(&control->stop_requested) != 0) {
+                task_tail = system_load_acquire(&control->task_tail);
+                should_stop = completion_head >= task_tail;
+            }
         }
-        completion_limit = __shfl_sync(kFullWarp, completion_limit, 0);
+        completion_count = __shfl_sync(kFullWarp, completion_count, 0);
         should_stop = __shfl_sync(kFullWarp, should_stop, 0);
         if (should_stop) {
             return;
         }
-
-        bool completion_ready = false;
-        if (lane < completion_limit) {
-            const std::uint64_t completion_index = completion_head + lane;
-            completion_ready =
-                shared_atomic_load(
-                    &shared_completion_slots[completion_index & kSharedQueueMask].sequence) ==
-                completion_index + 1;
-        }
-        const unsigned ready_mask = __ballot_sync(kFullWarp, completion_ready);
-        if (lane == 0) {
-            unsigned expected_mask = kFullWarp;
-            if (completion_limit < 32) {
-                expected_mask = (1U << completion_limit) - 1U;
-            }
-            const unsigned missing_mask = expected_mask & ~ready_mask;
-            completion_count = missing_mask == 0
-                                   ? completion_limit
-                                   : static_cast<std::uint32_t>(__ffs(missing_mask) - 1);
-        }
-        completion_count = __shfl_sync(kFullWarp, completion_count, 0);
         if (completion_count == 0) {
             if (lane == 0) {
                 __nanosleep(64);
@@ -840,40 +849,59 @@ __global__ void warp_specialized_kernel(WarpSpecializedControl *control,
             continue;
         }
 
+        CopyCompletion lane_completion{};
+#pragma unroll
+        for (std::uint32_t wave_base = 0; wave_base < kWarpSpecializedMetaBatch;
+             wave_base += SharedQueueDepth) {
+            if (wave_base >= completion_count) {
+                break;
+            }
+            const std::uint32_t wave_end = wave_base + SharedQueueDepth < completion_count
+                                               ? wave_base + SharedQueueDepth
+                                               : completion_count;
+            if (lane >= wave_base && lane < wave_end) {
+                const std::uint64_t completion_index = completion_head + lane;
+                auto *const completion_slot =
+                    &shared_completion_slots[completion_index & kSharedQueueMask];
+                while (shared_atomic_load(&completion_slot->sequence) != completion_index + 1) {
+                    __nanosleep(64);
+                }
+                lane_completion = completion_slot->completion;
+            }
+            __syncwarp();
+            if (lane >= wave_base && lane < wave_end) {
+                const std::uint64_t completion_index = completion_head + lane;
+                shared_atomic_store(
+                    &shared_completion_slots[completion_index & kSharedQueueMask].sequence,
+                    completion_index + SharedQueueDepth);
+            }
+            __syncwarp();
+        }
         if (lane < completion_count) {
             const std::uint64_t completion_index = completion_head + lane;
             external_completion_slots[completion_index & capacity_mask].completion =
-                shared_completion_slots[completion_index & kSharedQueueMask].completion;
+                lane_completion;
         }
         __syncwarp();
         if (lane == 0) {
             system_store_release(&control->completion_tail, completion_head + completion_count);
         }
-        if (lane < completion_count) {
-            const std::uint64_t completion_index = completion_head + lane;
-            shared_atomic_store(
-                &shared_completion_slots[completion_index & kSharedQueueMask].sequence,
-                completion_index + SharedQueueDepth);
-        }
-        __syncwarp();
         completion_head += completion_count;
     }
 }
 
-template <std::uint32_t TasksPerBatch, std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
+template <std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
 __global__ void
 warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                                  WarpSpecializedTaskSlot *external_task_slots,
                                  WarpSpecializedCompletionSlot *external_completion_slots,
                                  std::uint64_t capacity_mask, std::uint64_t stage_buffer_base) {
-    static_assert(TasksPerBatch > 0);
-    static_assert(TasksPerBatch <= 32);
     static_assert(SharedQueueDepth >= 2);
     static_assert(SharedQueueDepth <= 512);
     static_assert((SharedQueueDepth & (SharedQueueDepth - 1)) == 0);
-    static_assert(TasksPerBatch <= SharedQueueDepth);
     static_assert(CopyWarps > 0);
     static_assert(CopyWarps <= 30);
+    static_assert((kWarpSpecializedMetaBatch + CopyWarps - 1) / CopyWarps <= SharedQueueDepth);
     constexpr std::uint64_t kSharedQueueMask = SharedQueueDepth - 1;
     constexpr unsigned kFullWarp = 0xffffffffU;
     constexpr std::uint32_t kSharedSlotCount = SharedQueueDepth * CopyWarps;
@@ -905,8 +933,9 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                 std::uint64_t task_tail = system_load_acquire(&control->task_tail);
                 if (task_head < task_tail) {
                     const std::uint64_t available = task_tail - task_head;
-                    task_count = static_cast<std::uint32_t>(
-                        available < TasksPerBatch ? available : TasksPerBatch);
+                    task_count = static_cast<std::uint32_t>(available < kWarpSpecializedMetaBatch
+                                                                ? available
+                                                                : kWarpSpecializedMetaBatch);
                 } else if (system_load_acquire(&control->stop_requested) != 0) {
                     task_tail = system_load_acquire(&control->task_tail);
                     should_stop = task_head >= task_tail;
@@ -923,7 +952,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                         owner * SharedQueueDepth + (local_index & kSharedQueueMask);
                     auto *const slot = &shared_task_slots[slot_index];
                     const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
-                    slot->consumed.wait_parity(!phase);
+                    wait_pipeline_parity(&slot->consumed, !phase);
                     slot->task = {};
                     (void)slot->ready.arrive();
                 }
@@ -944,7 +973,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                     owner * SharedQueueDepth + (local_index & kSharedQueueMask);
                 auto *const slot = &shared_task_slots[slot_index];
                 const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
-                slot->consumed.wait_parity(!phase);
+                wait_pipeline_parity(&slot->consumed, !phase);
                 slot->task = external_task_slots[task_index & capacity_mask].task;
                 (void)slot->ready.arrive();
             }
@@ -963,7 +992,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
             const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
             CopyTask task{};
             if (lane == 0) {
-                task_slot->ready.wait_parity(phase);
+                wait_pipeline_parity(&task_slot->ready, phase);
                 task = task_slot->task;
                 (void)task_slot->consumed.arrive();
             }
@@ -984,7 +1013,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
 
             if (lane == 0) {
                 auto *const completion_slot = &shared_completion_slots[slot_index];
-                completion_slot->consumed.wait_parity(!phase);
+                wait_pipeline_parity(&completion_slot->consumed, !phase);
                 completion_slot->completion.task_id = task.task_id;
                 completion_slot->completion.result = CopyTaskResult::success;
                 (void)completion_slot->ready.arrive();
@@ -1002,7 +1031,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
             if (completion_head < task_tail) {
                 const std::uint64_t available = task_tail - completion_head;
                 completion_count = static_cast<std::uint32_t>(
-                    available < TasksPerBatch ? available : TasksPerBatch);
+                    available < kWarpSpecializedMetaBatch ? available : kWarpSpecializedMetaBatch);
             } else if (system_load_acquire(&control->stop_requested) != 0) {
                 task_tail = system_load_acquire(&control->task_tail);
                 should_stop = completion_head >= task_tail;
@@ -1028,7 +1057,7 @@ warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                 owner * SharedQueueDepth + (local_index & kSharedQueueMask);
             auto *const slot = &shared_completion_slots[slot_index];
             const bool phase = ((local_index / SharedQueueDepth) & 1U) != 0;
-            slot->ready.wait_parity(phase);
+            wait_pipeline_parity(&slot->ready, phase);
             external_completion_slots[completion_index & capacity_mask].completion =
                 slot->completion;
         }
@@ -1304,8 +1333,7 @@ bool dispatch_static_partition_spsc_variant(
 #undef UGDR_DISPATCH_STATIC_SPSC_WARPS
 }
 
-template <std::uint32_t TasksPerBatch, std::uint32_t SharedQueueDepth,
-          std::uint32_t CopyClaimBatch = 2>
+template <std::uint32_t SharedQueueDepth, std::uint32_t CopyClaimBatch = 2>
 bool launch_warp_specialized_kernel(WarpSpecializedControl *control,
                                     WarpSpecializedTaskSlot *task_slots,
                                     WarpSpecializedCompletionSlot *completion_slots,
@@ -1313,69 +1341,28 @@ bool launch_warp_specialized_kernel(WarpSpecializedControl *control,
                                     std::uint64_t stage_buffer_base,
                                     KernelResourceUsage *resources) {
     const std::uint32_t thread_count = (copy_warps + 2) * 32;
-    if (!query_kernel_resources(
-            warp_specialized_kernel<TasksPerBatch, SharedQueueDepth, CopyClaimBatch>, thread_count,
-            resources)) {
+    if (!query_kernel_resources(warp_specialized_kernel<SharedQueueDepth, CopyClaimBatch>,
+                                thread_count, resources)) {
         return false;
     }
-    warp_specialized_kernel<TasksPerBatch, SharedQueueDepth, CopyClaimBatch><<<1, thread_count>>>(
+    warp_specialized_kernel<SharedQueueDepth, CopyClaimBatch><<<1, thread_count>>>(
         control, task_slots, completion_slots, capacity_mask, copy_warps, stage_buffer_base);
     return true;
 }
 
 template <std::uint32_t SharedQueueDepth>
-bool dispatch_warp_specialized_batch(std::uint32_t device_batch, WarpSpecializedControl *control,
+bool launch_warp_specialized_variant(WarpSpecializedControl *control,
                                      WarpSpecializedTaskSlot *task_slots,
                                      WarpSpecializedCompletionSlot *completion_slots,
                                      std::uint64_t capacity_mask, std::uint32_t copy_warps,
                                      std::uint64_t stage_buffer_base,
                                      KernelResourceUsage *resources) {
-    switch (device_batch) {
-    case 1:
-        return launch_warp_specialized_kernel<1, SharedQueueDepth>(
-            control, task_slots, completion_slots, capacity_mask, copy_warps, stage_buffer_base,
-            resources);
-    case 2:
-        if constexpr (SharedQueueDepth >= 2) {
-            return launch_warp_specialized_kernel<2, SharedQueueDepth>(
-                control, task_slots, completion_slots, capacity_mask, copy_warps, stage_buffer_base,
-                resources);
-        }
-        return false;
-    case 4:
-        if constexpr (SharedQueueDepth >= 4) {
-            return launch_warp_specialized_kernel<4, SharedQueueDepth>(
-                control, task_slots, completion_slots, capacity_mask, copy_warps, stage_buffer_base,
-                resources);
-        }
-        return false;
-    case 8:
-        if constexpr (SharedQueueDepth >= 8) {
-            return launch_warp_specialized_kernel<8, SharedQueueDepth>(
-                control, task_slots, completion_slots, capacity_mask, copy_warps, stage_buffer_base,
-                resources);
-        }
-        return false;
-    case 16:
-        if constexpr (SharedQueueDepth >= 16) {
-            return launch_warp_specialized_kernel<16, SharedQueueDepth>(
-                control, task_slots, completion_slots, capacity_mask, copy_warps, stage_buffer_base,
-                resources);
-        }
-        return false;
-    case 32:
-        if constexpr (SharedQueueDepth >= 32) {
-            return launch_warp_specialized_kernel<32, SharedQueueDepth>(
-                control, task_slots, completion_slots, capacity_mask, copy_warps, stage_buffer_base,
-                resources);
-        }
-        return false;
-    default:
-        return false;
-    }
+    return launch_warp_specialized_kernel<SharedQueueDepth>(control, task_slots, completion_slots,
+                                                            capacity_mask, copy_warps,
+                                                            stage_buffer_base, resources);
 }
 
-template <std::uint32_t TasksPerBatch, std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
+template <std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
 bool launch_warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                                              WarpSpecializedTaskSlot *task_slots,
                                              WarpSpecializedCompletionSlot *completion_slots,
@@ -1383,80 +1370,39 @@ bool launch_warp_specialized_pipeline_kernel(WarpSpecializedControl *control,
                                              std::uint64_t stage_buffer_base,
                                              KernelResourceUsage *resources) {
     constexpr std::uint32_t kThreadCount = (CopyWarps + 2) * 32;
-    if (!query_kernel_resources(
-            warp_specialized_pipeline_kernel<TasksPerBatch, SharedQueueDepth, CopyWarps>,
-            kThreadCount, resources)) {
+    if (!query_kernel_resources(warp_specialized_pipeline_kernel<SharedQueueDepth, CopyWarps>,
+                                kThreadCount, resources)) {
         return false;
     }
-    warp_specialized_pipeline_kernel<TasksPerBatch, SharedQueueDepth, CopyWarps>
-        <<<1, kThreadCount>>>(control, task_slots, completion_slots, capacity_mask,
-                              stage_buffer_base);
+    warp_specialized_pipeline_kernel<SharedQueueDepth, CopyWarps><<<1, kThreadCount>>>(
+        control, task_slots, completion_slots, capacity_mask, stage_buffer_base);
     return true;
 }
 
 template <std::uint32_t SharedQueueDepth, std::uint32_t CopyWarps>
-bool dispatch_warp_specialized_pipeline_batch(
-    std::uint32_t device_batch, WarpSpecializedControl *control,
-    WarpSpecializedTaskSlot *task_slots, WarpSpecializedCompletionSlot *completion_slots,
-    std::uint64_t capacity_mask, std::uint64_t stage_buffer_base, KernelResourceUsage *resources) {
-#define UGDR_LAUNCH_PIPELINE_BATCH(batch)                                                          \
-    do {                                                                                           \
-        if (!launch_warp_specialized_pipeline_kernel<batch, SharedQueueDepth, CopyWarps>(          \
-                control, task_slots, completion_slots, capacity_mask, stage_buffer_base,           \
-                resources)) {                                                                      \
-            return false;                                                                          \
-        }                                                                                          \
-    } while (false)
-    switch (device_batch) {
-    case 1:
-        UGDR_LAUNCH_PIPELINE_BATCH(1);
-        return true;
-    case 2:
-        if constexpr (SharedQueueDepth >= 2) {
-            UGDR_LAUNCH_PIPELINE_BATCH(2);
-            return true;
-        }
+bool launch_warp_specialized_pipeline_variant(WarpSpecializedControl *control,
+                                              WarpSpecializedTaskSlot *task_slots,
+                                              WarpSpecializedCompletionSlot *completion_slots,
+                                              std::uint64_t capacity_mask,
+                                              std::uint64_t stage_buffer_base,
+                                              KernelResourceUsage *resources) {
+    if constexpr ((kWarpSpecializedMetaBatch + CopyWarps - 1) / CopyWarps > SharedQueueDepth) {
         return false;
-    case 4:
-        if constexpr (SharedQueueDepth >= 4) {
-            UGDR_LAUNCH_PIPELINE_BATCH(4);
-            return true;
-        }
-        return false;
-    case 8:
-        if constexpr (SharedQueueDepth >= 8) {
-            UGDR_LAUNCH_PIPELINE_BATCH(8);
-            return true;
-        }
-        return false;
-    case 16:
-        if constexpr (SharedQueueDepth >= 16) {
-            UGDR_LAUNCH_PIPELINE_BATCH(16);
-            return true;
-        }
-        return false;
-    case 32:
-        if constexpr (SharedQueueDepth >= 32) {
-            UGDR_LAUNCH_PIPELINE_BATCH(32);
-            return true;
-        }
-        return false;
-    default:
-        return false;
+    } else {
+        return launch_warp_specialized_pipeline_kernel<SharedQueueDepth, CopyWarps>(
+            control, task_slots, completion_slots, capacity_mask, stage_buffer_base, resources);
     }
-#undef UGDR_LAUNCH_PIPELINE_BATCH
 }
 
 template <std::uint32_t SharedQueueDepth>
 bool dispatch_warp_specialized_pipeline_copy_warps(
-    std::uint32_t copy_warps, std::uint32_t device_batch, WarpSpecializedControl *control,
-    WarpSpecializedTaskSlot *task_slots, WarpSpecializedCompletionSlot *completion_slots,
-    std::uint64_t capacity_mask, std::uint64_t stage_buffer_base, KernelResourceUsage *resources) {
+    std::uint32_t copy_warps, WarpSpecializedControl *control, WarpSpecializedTaskSlot *task_slots,
+    WarpSpecializedCompletionSlot *completion_slots, std::uint64_t capacity_mask,
+    std::uint64_t stage_buffer_base, KernelResourceUsage *resources) {
 #define UGDR_DISPATCH_PIPELINE_COPY_WARPS(copy_warp_count)                                         \
     case copy_warp_count:                                                                          \
-        return dispatch_warp_specialized_pipeline_batch<SharedQueueDepth, copy_warp_count>(        \
-            device_batch, control, task_slots, completion_slots, capacity_mask, stage_buffer_base, \
-            resources)
+        return launch_warp_specialized_pipeline_variant<SharedQueueDepth, copy_warp_count>(        \
+            control, task_slots, completion_slots, capacity_mask, stage_buffer_base, resources)
     switch (copy_warps) {
         UGDR_DISPATCH_PIPELINE_COPY_WARPS(2);
         UGDR_DISPATCH_PIPELINE_COPY_WARPS(6);
@@ -1473,8 +1419,7 @@ bool dispatch_warp_specialized_pipeline_copy_warps(
 }
 
 template <std::uint32_t SharedQueueDepth>
-bool dispatch_warp_specialized_variant(bool use_pipeline, std::uint32_t device_batch,
-                                       WarpSpecializedControl *control,
+bool dispatch_warp_specialized_variant(bool use_pipeline, WarpSpecializedControl *control,
                                        WarpSpecializedTaskSlot *task_slots,
                                        WarpSpecializedCompletionSlot *completion_slots,
                                        std::uint64_t capacity_mask, std::uint32_t copy_warps,
@@ -1483,14 +1428,14 @@ bool dispatch_warp_specialized_variant(bool use_pipeline, std::uint32_t device_b
     if (use_pipeline) {
         if constexpr (SharedQueueDepth <= 16) {
             return dispatch_warp_specialized_pipeline_copy_warps<SharedQueueDepth>(
-                copy_warps, device_batch, control, task_slots, completion_slots, capacity_mask,
-                stage_buffer_base, resources);
+                copy_warps, control, task_slots, completion_slots, capacity_mask, stage_buffer_base,
+                resources);
         }
         return false;
     }
-    return dispatch_warp_specialized_batch<SharedQueueDepth>(
-        device_batch, control, task_slots, completion_slots, capacity_mask, copy_warps,
-        stage_buffer_base, resources);
+    return launch_warp_specialized_variant<SharedQueueDepth>(control, task_slots, completion_slots,
+                                                             capacity_mask, copy_warps,
+                                                             stage_buffer_base, resources);
 }
 
 int cuda_status(cudaError_t status) noexcept {
@@ -1560,8 +1505,7 @@ bool is_supported_copy_warps(std::uint32_t value) noexcept {
 }
 
 bool is_supported_shared_queue_depth(std::uint32_t value) noexcept {
-    return value == 2 || value == 4 || value == 8 || value == 16 || value == 32 || value == 64 ||
-           value == 128 || value == 256 || value == 512;
+    return value == 2 || value == 4 || value == 8 || value == 16;
 }
 
 bool is_supported_pipeline_copy_warps(std::uint32_t value) noexcept {
@@ -1615,15 +1559,15 @@ bool static_partition_spsc_allocation_size(std::size_t capacity, std::uint32_t c
 }
 
 bool warp_specialized_allocation_size(std::size_t capacity, std::uint32_t copy_warps,
-                                      std::uint32_t device_batch, std::uint32_t shared_queue_depth,
-                                      std::size_t *host_bytes, std::size_t *shared_bytes) noexcept {
+                                      std::uint32_t shared_queue_depth, std::size_t *host_bytes,
+                                      std::size_t *shared_bytes) noexcept {
     constexpr std::size_t kPerHostSlotBytes =
         sizeof(WarpSpecializedTaskSlot) + sizeof(WarpSpecializedCompletionSlot);
     constexpr std::size_t kPerSharedSlotBytes =
         sizeof(WarpSpecializedSharedTaskSlot) + sizeof(WarpSpecializedSharedCompletionSlot);
-    if (copy_warps == 0 || copy_warps > 30 || !is_supported_device_batch(device_batch) ||
-        !is_power_of_two(capacity) || !is_supported_shared_queue_depth(shared_queue_depth) ||
-        device_batch > shared_queue_depth ||
+    if (copy_warps == 0 || copy_warps > 30 || !is_power_of_two(capacity) ||
+        capacity < kWarpSpecializedMetaBatch ||
+        !is_supported_shared_queue_depth(shared_queue_depth) ||
         capacity > (std::numeric_limits<std::size_t>::max() - sizeof(WarpSpecializedControl)) /
                        kPerHostSlotBytes ||
         shared_queue_depth >
@@ -1638,22 +1582,30 @@ bool warp_specialized_allocation_size(std::size_t capacity, std::uint32_t copy_w
 }
 
 bool warp_specialized_pipeline_allocation_size(std::size_t capacity, std::uint32_t copy_warps,
-                                               std::uint32_t device_batch,
                                                std::uint32_t shared_queue_depth,
                                                std::size_t *host_bytes,
                                                std::size_t *shared_bytes) noexcept {
-    std::size_t unused_shared_bytes = 0;
-    if (!is_supported_pipeline_copy_warps(copy_warps) || shared_queue_depth > 16 ||
-        !warp_specialized_allocation_size(capacity, copy_warps, device_batch, shared_queue_depth,
-                                          host_bytes, &unused_shared_bytes)) {
-        return false;
-    }
+    constexpr std::size_t kPerHostSlotBytes =
+        sizeof(WarpSpecializedTaskSlot) + sizeof(WarpSpecializedCompletionSlot);
     constexpr std::size_t kPerSharedSlotBytes =
         sizeof(WarpSpecializedPipelineTaskSlot) + sizeof(WarpSpecializedPipelineCompletionSlot);
+    if (!is_supported_pipeline_copy_warps(copy_warps)) {
+        return false;
+    }
+    const std::uint32_t required_queue_depth =
+        (kWarpSpecializedMetaBatch + copy_warps - 1) / copy_warps;
+    if (!is_power_of_two(capacity) || capacity < kWarpSpecializedMetaBatch ||
+        !is_supported_shared_queue_depth(shared_queue_depth) || shared_queue_depth > 16 ||
+        shared_queue_depth < required_queue_depth ||
+        capacity > (std::numeric_limits<std::size_t>::max() - sizeof(WarpSpecializedControl)) /
+                       kPerHostSlotBytes) {
+        return false;
+    }
     const std::size_t slot_count = static_cast<std::size_t>(copy_warps) * shared_queue_depth;
     if (slot_count > (std::numeric_limits<std::size_t>::max() - 64) / kPerSharedSlotBytes) {
         return false;
     }
+    *host_bytes = sizeof(WarpSpecializedControl) + capacity * kPerHostSlotBytes;
     *shared_bytes = slot_count * kPerSharedSlotBytes;
     return *shared_bytes <= 48 * 1024;
 }
@@ -1813,14 +1765,15 @@ int validate_persistent_copy_config(const PersistentCopyConfig &config) noexcept
         config.model == PersistentCopyModel::warp_specialized_pipeline) {
         std::size_t host_bytes = 0;
         std::size_t shared_bytes = 0;
-        const bool valid =
-            config.model == PersistentCopyModel::warp_specialized_pipeline
-                ? warp_specialized_pipeline_allocation_size(
-                      config.outstanding_capacity, config.copy_warps, config.device_batch,
-                      config.shared_queue_depth, &host_bytes, &shared_bytes)
-                : warp_specialized_allocation_size(config.outstanding_capacity, config.copy_warps,
-                                                   config.device_batch, config.shared_queue_depth,
-                                                   &host_bytes, &shared_bytes);
+        const bool valid = config.model == PersistentCopyModel::warp_specialized_pipeline
+                               ? config.device_batch == kWarpSpecializedMetaBatch &&
+                                     warp_specialized_pipeline_allocation_size(
+                                         config.outstanding_capacity, config.copy_warps,
+                                         config.shared_queue_depth, &host_bytes, &shared_bytes)
+                               : config.device_batch == kWarpSpecializedMetaBatch &&
+                                     warp_specialized_allocation_size(
+                                         config.outstanding_capacity, config.copy_warps,
+                                         config.shared_queue_depth, &host_bytes, &shared_bytes);
         if (!valid) {
             return EINVAL;
         }
@@ -2833,14 +2786,14 @@ WarpSpecializedQueue::~WarpSpecializedQueue() {
 }
 
 int WarpSpecializedQueue::allocate(std::size_t capacity, std::uint32_t copy_warps,
-                                   std::uint32_t device_batch, std::uint32_t shared_queue_depth,
+                                   std::uint32_t shared_queue_depth,
                                    std::uint64_t stage_buffer_base,
                                    WarpSpecializedQueue *queue) noexcept {
     std::size_t host_bytes = 0;
     std::size_t shared_bytes = 0;
     if (queue == nullptr || !queue->empty() || stage_buffer_base == 0 ||
-        !warp_specialized_allocation_size(capacity, copy_warps, device_batch, shared_queue_depth,
-                                          &host_bytes, &shared_bytes)) {
+        !warp_specialized_allocation_size(capacity, copy_warps, shared_queue_depth, &host_bytes,
+                                          &shared_bytes)) {
         return EINVAL;
     }
     const int status = MappedPinnedMemory::allocate(host_bytes, &queue->memory_);
@@ -2851,22 +2804,21 @@ int WarpSpecializedQueue::allocate(std::size_t capacity, std::uint32_t copy_warp
     queue->capacity_mask_ = capacity - 1;
     queue->shared_memory_bytes_ = shared_bytes;
     queue->copy_warps_ = copy_warps;
-    queue->device_batch_ = device_batch;
+    queue->device_batch_ = kWarpSpecializedMetaBatch;
     queue->shared_queue_depth_ = shared_queue_depth;
     queue->stage_buffer_base_ = stage_buffer_base;
     return 0;
 }
 
 int WarpSpecializedQueue::allocate_pipeline(std::size_t capacity, std::uint32_t copy_warps,
-                                            std::uint32_t device_batch,
                                             std::uint32_t shared_queue_depth,
                                             std::uint64_t stage_buffer_base,
                                             WarpSpecializedQueue *queue) noexcept {
     std::size_t host_bytes = 0;
     std::size_t shared_bytes = 0;
     if (queue == nullptr || !queue->empty() || stage_buffer_base == 0 ||
-        !warp_specialized_pipeline_allocation_size(
-            capacity, copy_warps, device_batch, shared_queue_depth, &host_bytes, &shared_bytes)) {
+        !warp_specialized_pipeline_allocation_size(capacity, copy_warps, shared_queue_depth,
+                                                   &host_bytes, &shared_bytes)) {
         return EINVAL;
     }
     const int status = MappedPinnedMemory::allocate(host_bytes, &queue->memory_);
@@ -2877,7 +2829,7 @@ int WarpSpecializedQueue::allocate_pipeline(std::size_t capacity, std::uint32_t 
     queue->capacity_mask_ = capacity - 1;
     queue->shared_memory_bytes_ = shared_bytes;
     queue->copy_warps_ = copy_warps;
-    queue->device_batch_ = device_batch;
+    queue->device_batch_ = kWarpSpecializedMetaBatch;
     queue->shared_queue_depth_ = shared_queue_depth;
     queue->stage_buffer_base_ = stage_buffer_base;
     return 0;
@@ -2912,47 +2864,22 @@ int WarpSpecializedQueue::start_impl(bool use_pipeline) noexcept {
     switch (shared_queue_depth_) {
     case 2:
         launched = dispatch_warp_specialized_variant<2>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
+            use_pipeline, control_device, task_slots_device, completion_slots_device,
             capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
         break;
     case 4:
         launched = dispatch_warp_specialized_variant<4>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
+            use_pipeline, control_device, task_slots_device, completion_slots_device,
             capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
         break;
     case 8:
         launched = dispatch_warp_specialized_variant<8>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
+            use_pipeline, control_device, task_slots_device, completion_slots_device,
             capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
         break;
     case 16:
         launched = dispatch_warp_specialized_variant<16>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
-        break;
-    case 32:
-        launched = dispatch_warp_specialized_variant<32>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
-        break;
-    case 64:
-        launched = dispatch_warp_specialized_variant<64>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
-        break;
-    case 128:
-        launched = dispatch_warp_specialized_variant<128>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
-        break;
-    case 256:
-        launched = dispatch_warp_specialized_variant<256>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
-            capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
-        break;
-    case 512:
-        launched = dispatch_warp_specialized_variant<512>(
-            use_pipeline, device_batch_, control_device, task_slots_device, completion_slots_device,
+            use_pipeline, control_device, task_slots_device, completion_slots_device,
             capacity_mask_, copy_warps_, stage_buffer_base_, &kernel_resources_);
         break;
     default:

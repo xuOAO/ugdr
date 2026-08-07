@@ -67,36 +67,83 @@ bool LoopWorker::progress_once() {
     }
     bool progressed = false;
     if (role_ == LoopWorkerRole::responder) {
-        progressed = try_backend_completion(view) || progressed;
-        progressed = try_parent_response(view) || progressed;
-        progressed = try_request(view) || progressed;
-        progressed = try_parent_response(view) || progressed;
+        while (try_backend_completions(view)) {
+            progressed = true;
+        }
+        while (try_parent_response(view)) {
+            progressed = true;
+        }
+        if (try_flush_backend_requests()) {
+            progressed = true;
+        }
+        if (pending_backend_request_count_ == 0) {
+            while (try_request(view)) {
+                progressed = true;
+            }
+            if (try_flush_backend_requests()) {
+                progressed = true;
+            }
+        }
+        while (try_backend_completions(view)) {
+            progressed = true;
+        }
+        while (try_parent_response(view)) {
+            progressed = true;
+        }
     } else {
-        progressed = try_response(view) || progressed;
-        progressed = try_send(view) || progressed;
+        while (try_response(view)) {
+            progressed = true;
+        }
+        while (try_send(view)) {
+            progressed = true;
+        }
     }
     return progressed;
 }
 
-bool LoopWorker::try_backend_completion(const control::WorkerQpView &) {
-    BackendCompletion completion;
-    if (!backend_.try_pop_completion(completion)) {
+bool LoopWorker::try_backend_completions(const control::WorkerQpView &) {
+    std::array<BackendCompletion, kBackendBatchCapacity> completions{};
+    const std::size_t completion_count =
+        backend_.try_pop_completion_batch(completions.data(), completions.size());
+    if (completion_count == 0) {
         return false;
     }
+    for (std::size_t index = 0; index < completion_count; ++index) {
+        const BackendCompletion &completion = completions[index];
+        const auto inflight = responder_inflight_.find(completion.parent_request_id);
+        if (inflight == responder_inflight_.end()) {
+            continue;
+        }
+        ResponderInflight &parent = inflight->second;
+        if (completion.payload_index >= parent.payload_count ||
+            parent.terminal[completion.payload_index] != 0) {
+            parent.parent_error = DatagramResult::backend_error;
+            continue;
+        }
+        parent.terminal[completion.payload_index] = 1;
+        parent.results[completion.payload_index] = completion.result;
+        ++parent.terminal_count;
+    }
+    return true;
+}
 
-    const auto inflight = responder_inflight_.find(completion.parent_request_id);
-    if (inflight == responder_inflight_.end()) {
-        return true;
+bool LoopWorker::try_flush_backend_requests() {
+    if (pending_backend_request_count_ == 0) {
+        return false;
     }
-    ResponderInflight &parent = inflight->second;
-    if (completion.payload_index >= parent.payload_count ||
-        parent.terminal[completion.payload_index] != 0) {
-        parent.parent_error = DatagramResult::backend_error;
-        return true;
+    const std::size_t accepted_count =
+        backend_.try_submit_batch(pending_backend_requests_.data(), pending_backend_request_count_);
+    if (accepted_count == 0 || accepted_count > pending_backend_request_count_) {
+        return false;
     }
-    parent.terminal[completion.payload_index] = 1;
-    parent.results[completion.payload_index] = completion.result;
-    ++parent.terminal_count;
+    pending_backend_request_count_ -= accepted_count;
+    if (pending_backend_request_count_ != 0) {
+        std::move(pending_backend_requests_.begin() + static_cast<std::ptrdiff_t>(accepted_count),
+                  pending_backend_requests_.begin() +
+                      static_cast<std::ptrdiff_t>(accepted_count + pending_backend_request_count_),
+                  pending_backend_requests_.begin());
+    }
+    (void)backend_.flush_submissions();
     return true;
 }
 
@@ -312,7 +359,10 @@ bool LoopWorker::try_request(const control::WorkerQpView &view) {
         return true;
     }
 
-    BackendRequest backend_request;
+    if (pending_backend_request_count_ == pending_backend_requests_.size()) {
+        return loaded;
+    }
+    BackendRequest &backend_request = pending_backend_requests_[pending_backend_request_count_];
     backend_request.parent_request_id = request.parent_request_id;
     backend_request.parent_total_length = request.parent_total_length;
     backend_request.payload_offset = request.payload_offset;
@@ -321,12 +371,11 @@ bool LoopWorker::try_request(const control::WorkerQpView &view) {
     backend_request.payload_length = request.payload_length;
     backend_request.payload_index = request.payload_index;
     backend_request.payload_count = request.payload_count;
-    if (!backend_.try_submit(backend_request)) {
-        return loaded;
-    }
+    ++pending_backend_request_count_;
     if (parent.has_receive && !parent.receive_consumed) {
         if (view.receive_queue->consumer_release() != 0) {
-            return false;
+            --pending_backend_request_count_;
+            return loaded;
         }
         parent.receive_consumed = true;
     }

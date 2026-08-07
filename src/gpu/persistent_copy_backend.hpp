@@ -12,7 +12,7 @@
 namespace ugdr::gpu {
 
 constexpr std::uint32_t kPersistentCudaCopyBackendCopyWarps = 30;
-constexpr std::uint32_t kPersistentCudaCopyBackendDeviceBatch = 16;
+constexpr std::uint32_t kPersistentCudaCopyBackendDeviceBatch = kWarpSpecializedMetaBatch;
 constexpr std::uint32_t kPersistentCudaCopyBackendSharedQueueDepth = 16;
 constexpr std::size_t kPersistentCudaCopyBackendHostBatch = 64;
 
@@ -156,7 +156,12 @@ class PersistentCudaCopyBackend final : public worker::CopyBackend {
 
     int start(const PersistentCudaCopyBackendConfig &config) noexcept;
     bool try_submit(const worker::BackendRequest &request) noexcept override;
+    std::size_t try_submit_batch(const worker::BackendRequest *requests,
+                                 std::size_t request_count) noexcept override;
+    bool flush_submissions() noexcept override;
     bool try_pop_completion(worker::BackendCompletion &completion) noexcept override;
+    std::size_t try_pop_completion_batch(worker::BackendCompletion *completions,
+                                         std::size_t completion_capacity) noexcept override;
     int request_stop() noexcept;
     int wait() noexcept;
 
@@ -165,6 +170,10 @@ class PersistentCudaCopyBackend final : public worker::CopyBackend {
     [[nodiscard]] int last_error() const noexcept;
 
   private:
+    bool try_submit_at_time(const worker::BackendRequest &request,
+                            std::uint64_t now_nanoseconds) noexcept;
+    bool try_pop_completion_at_time(worker::BackendCompletion &completion,
+                                    std::uint64_t now_nanoseconds) noexcept;
     void handle_host_error(int status) noexcept;
     int progress_stop_request() noexcept;
     void abort_and_reset() noexcept;
