@@ -486,8 +486,28 @@ bool PersistentCudaCopyBackend::try_submit(const worker::BackendRequest &request
     if (state_ != PersistentCudaCopyBackendState::accepting) {
         return false;
     }
+    return try_submit_at_time(request, clock_->now_nanoseconds());
+}
+
+std::size_t PersistentCudaCopyBackend::try_submit_batch(const worker::BackendRequest *requests,
+                                                        std::size_t request_count) noexcept {
+    if (state_ != PersistentCudaCopyBackendState::accepting ||
+        (requests == nullptr && request_count != 0)) {
+        return 0;
+    }
+    const std::uint64_t now_nanoseconds = clock_->now_nanoseconds();
+    std::size_t accepted_count = 0;
+    while (accepted_count != request_count &&
+           try_submit_at_time(requests[accepted_count], now_nanoseconds)) {
+        ++accepted_count;
+    }
+    return accepted_count;
+}
+
+bool PersistentCudaCopyBackend::try_submit_at_time(const worker::BackendRequest &request,
+                                                   std::uint64_t now_nanoseconds) noexcept {
     bool accepted = false;
-    const int status = host_.try_submit(request, clock_->now_nanoseconds(), &accepted);
+    const int status = host_.try_submit(request, now_nanoseconds, &accepted);
     if (status == 0) {
         return accepted;
     }
@@ -503,15 +523,48 @@ bool PersistentCudaCopyBackend::try_submit(const worker::BackendRequest &request
     return accepted;
 }
 
+bool PersistentCudaCopyBackend::flush_submissions() noexcept {
+    if (state_ != PersistentCudaCopyBackendState::accepting) {
+        return false;
+    }
+    const int status = host_.publish_pending_now();
+    if (status != 0) {
+        handle_host_error(status);
+        return false;
+    }
+    return true;
+}
+
 bool PersistentCudaCopyBackend::try_pop_completion(worker::BackendCompletion &completion) noexcept {
     if (state_ == PersistentCudaCopyBackendState::stopped) {
         return false;
     }
+    return try_pop_completion_at_time(completion, clock_->now_nanoseconds());
+}
+
+std::size_t
+PersistentCudaCopyBackend::try_pop_completion_batch(worker::BackendCompletion *completions,
+                                                    std::size_t completion_capacity) noexcept {
+    if (state_ == PersistentCudaCopyBackendState::stopped ||
+        (completions == nullptr && completion_capacity != 0)) {
+        return 0;
+    }
+    const std::uint64_t now_nanoseconds = clock_->now_nanoseconds();
+    std::size_t completed_count = 0;
+    while (completed_count != completion_capacity &&
+           try_pop_completion_at_time(completions[completed_count], now_nanoseconds)) {
+        ++completed_count;
+    }
+    return completed_count;
+}
+
+bool PersistentCudaCopyBackend::try_pop_completion_at_time(worker::BackendCompletion &completion,
+                                                           std::uint64_t now_nanoseconds) noexcept {
     bool completed = false;
-    int status = host_.try_pop_completion(&completion, clock_->now_nanoseconds(), &completed);
+    int status = host_.try_pop_completion(&completion, now_nanoseconds, &completed);
     if (status != 0) {
         handle_host_error(status);
-        status = host_.try_pop_completion(&completion, clock_->now_nanoseconds(), &completed);
+        status = host_.try_pop_completion(&completion, now_nanoseconds, &completed);
         if (status != 0) {
             last_error_ = status;
             completed = false;

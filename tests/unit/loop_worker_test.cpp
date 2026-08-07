@@ -256,11 +256,6 @@ bool payload_split_and_aggregate_test() {
         }
         seen[completed.payload_index] = true;
     }
-    for (int iteration = 0; iteration < 5; ++iteration) {
-        if (!responder.progress_once() || requester.progress_once()) {
-            return false;
-        }
-    }
     if (!responder.progress_once() || !requester.progress_once()) {
         return false;
     }
@@ -326,6 +321,51 @@ bool deterministic_error_test() {
            completions[0].status == UGDR_WC_REM_ACCESS_ERR;
 }
 
+bool backend_batch_backpressure_test() {
+    FakeCudaBackend memory_backend;
+    ugdr::control::QpService service(memory_backend);
+    Endpoint requester_endpoint;
+    Endpoint responder_endpoint;
+    if (!make_endpoint(service, 701, UINT64_C(0x72000000), &requester_endpoint) ||
+        !make_endpoint(service, 702, UINT64_C(0x73000000), &responder_endpoint) ||
+        !connect_endpoints(service, requester_endpoint, responder_endpoint)) {
+        return false;
+    }
+
+    ugdr::worker::LocalTransport transport(8, 8);
+    ugdr::test::ScriptedCopyBackend backend(3);
+    ugdr::worker::LoopWorker requester(service, requester_endpoint.qp_num, transport, backend,
+                                       ugdr::worker::LoopWorkerRole::requester, 10);
+    ugdr::worker::LoopWorker responder(service, responder_endpoint.qp_num, transport, backend,
+                                       ugdr::worker::LoopWorkerRole::responder, 10);
+    if (!post_send(service, requester_endpoint, responder_endpoint, 61, UGDR_WR_RDMA_WRITE,
+                   UGDR_SEND_SIGNALED) ||
+        !requester.progress_once() || !responder.progress_once() || backend.accepted_count() != 3 ||
+        backend.submit_batch_count() != 1) {
+        return false;
+    }
+    for (int index = 0; index < 3; ++index) {
+        if (!backend.progress_once()) {
+            return false;
+        }
+    }
+    if (!responder.progress_once() || backend.accepted_count() != 3 ||
+        backend.submit_batch_count() != 2) {
+        return false;
+    }
+    for (int index = 0; index < 3; ++index) {
+        if (!backend.progress_once()) {
+            return false;
+        }
+    }
+    if (!responder.progress_once() || !requester.progress_once()) {
+        return false;
+    }
+    const auto completions = drain(service, requester_endpoint);
+    return completions.size() == 1 && completions[0].wr_id == 61 &&
+           completions[0].status == UGDR_WC_SUCCESS;
+}
+
 bool sq_sig_all_test() {
     FakeCudaBackend memory_backend;
     ugdr::control::QpService service(memory_backend);
@@ -374,7 +414,9 @@ int main() {
     if (!post_send(service, requester_endpoint, responder_endpoint, 11, UGDR_WR_RDMA_WRITE,
                    UGDR_SEND_SIGNALED) ||
         !requester.progress_once() || !drain(service, requester_endpoint).empty() ||
-        !responder.progress_once() || backend.accepted_count() != 1) {
+        !responder.progress_once() || backend.accepted_count() != 2 ||
+        backend.submit_batch_count() != 1 || backend.completion_batch_count() == 0 ||
+        backend.flush_count() != 1) {
         return 2;
     }
     const auto *submitted = backend.front_request();
@@ -455,7 +497,6 @@ int main() {
     if (!post_send(service, requester_endpoint, responder_endpoint, 17, UGDR_WR_RDMA_WRITE,
                    UGDR_SEND_SIGNALED) ||
         !requester.progress_once() || !responder.progress_once() || !backend.progress_once() ||
-        !responder.progress_once() || !requester.progress_once() || !responder.progress_once() ||
         !backend.progress_once() || !responder.progress_once()) {
         return 13;
     }
@@ -498,8 +539,7 @@ int main() {
     if (!post_send(service, requester_endpoint, responder_endpoint, 23, UGDR_WR_RDMA_WRITE,
                    UGDR_SEND_SIGNALED) ||
         !requester.progress_once() || !responder.progress_once() || !backend.progress_once() ||
-        !responder.progress_once() || !requester.progress_once() || !responder.progress_once() ||
-        !backend.progress_once()) {
+        !responder.progress_once() || !backend.progress_once()) {
         return 20;
     }
     const ugdr::worker::ResponseDatagram blocking_response{
@@ -553,7 +593,8 @@ int main() {
     }
     completions = drain(service, requester_endpoint);
     return completions.size() == 1 && completions[0].wr_id == 16 && sq_sig_all_test() &&
-                   payload_split_and_aggregate_test() && deterministic_error_test()
+                   payload_split_and_aggregate_test() && deterministic_error_test() &&
+                   backend_batch_backpressure_test()
                ? 0
                : 29;
 }

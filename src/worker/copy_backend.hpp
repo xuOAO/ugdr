@@ -2,6 +2,7 @@
 
 #include "worker/local_transport.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace ugdr::worker {
@@ -32,7 +33,26 @@ class CopyBackend {
     virtual ~CopyBackend() = default;
 
     virtual bool try_submit(const BackendRequest &request) = 0;
+    virtual std::size_t try_submit_batch(const BackendRequest *requests,
+                                         std::size_t request_count) {
+        std::size_t accepted = 0;
+        while (accepted != request_count && try_submit(requests[accepted])) {
+            ++accepted;
+        }
+        return accepted;
+    }
+    virtual bool flush_submissions() {
+        return true;
+    }
     virtual bool try_pop_completion(BackendCompletion &completion) = 0;
+    virtual std::size_t try_pop_completion_batch(BackendCompletion *completions,
+                                                 std::size_t completion_capacity) {
+        std::size_t completed = 0;
+        while (completed != completion_capacity && try_pop_completion(completions[completed])) {
+            ++completed;
+        }
+        return completed;
+    }
 };
 
 }  // namespace ugdr::worker
