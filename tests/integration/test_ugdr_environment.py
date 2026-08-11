@@ -24,7 +24,7 @@ from ugdr_cli.environment import (  # noqa: E402
 
 
 class FakeEnvironment:
-    def __init__(self, cuda_output="Cuda compilation tools, release 12.3, V12.3.0"):
+    def __init__(self, cuda_output="Cuda compilation tools, release 12.8, V12.8.0"):
         commands = list(REQUIRED_BASE_COMMANDS) + ["nvcc", "nvidia-smi"]
         self.paths = {name: "/fake/{}".format(name) for name in commands}
         self.results = {
@@ -50,7 +50,7 @@ class FakeEnvironment:
 
 
 class EnvironmentContractTests(unittest.TestCase):
-    def test_cuda_12_3_and_gpu_pass(self):
+    def test_cuda_12_8_and_gpu_pass(self):
         fake = FakeEnvironment()
         result = run_doctor(which=fake.which, runner=fake.run)
 
@@ -62,7 +62,7 @@ class EnvironmentContractTests(unittest.TestCase):
         )
         cuda = next(check for check in result.checks if check.check_id == "cuda.toolkit")
         self.assertEqual(STATUS_PASS, cuda.status)
-        self.assertEqual("12.3", cuda.details["observed_version"])
+        self.assertEqual("12.8", cuda.details["observed_version"])
         self.assertEqual(CUDA_REQUIRED_RANGE, cuda.details["required_range"])
 
     def test_missing_base_command_has_precedence_and_all_failures_are_reported(self):
@@ -84,8 +84,8 @@ class EnvironmentContractTests(unittest.TestCase):
         self.assertIn("cuda.toolkit", failures)
         self.assertIn("gpu.nvidia", failures)
 
-    def test_cuda_open_interval_rejects_boundaries(self):
-        for observed in ("12.0", "13.0"):
+    def test_cuda_range_rejects_versions_below_12_8_and_cuda_13(self):
+        for observed in ("12.3", "12.7", "13.0"):
             with self.subTest(observed=observed):
                 fake = FakeEnvironment(
                     "Cuda compilation tools, release {}, V{}".format(observed, observed)
@@ -98,7 +98,7 @@ class EnvironmentContractTests(unittest.TestCase):
                 self.assertEqual(STATUS_FAIL, cuda.status)
                 self.assertEqual(observed, cuda.details["observed_version"])
 
-        build_version = FakeEnvironment("nvcc: V12.0.140")
+        build_version = FakeEnvironment("nvcc: V12.7.140")
         result = run_doctor(which=build_version.which, runner=build_version.run)
         self.assertEqual(12, result.exit_code)
 
