@@ -1,4 +1,5 @@
 #include "control/qp.hpp"
+#include "gpu/cuda_batch_copy_backend.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
 #include "gpu/persistent_copy_backend.hpp"
 #include "ipc/ipc.hpp"
@@ -9,6 +10,7 @@
 #include <cuda_runtime_api.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -54,6 +56,15 @@ constexpr std::array<std::uint32_t, 14> kBandwidthWrSizes{
     256 * 1024,      512 * 1024,       1024 * 1024,      2 * 1024 * 1024, 4 * 1024 * 1024,
     8 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024, 64 * 1024 * 1024};
 
+enum class BackendKind {
+    persistent,
+    cuda_batch,
+};
+
+const char *backend_name(BackendKind backend) {
+    return backend == BackendKind::cuda_batch ? "cuda-batch" : "persistent";
+}
+
 struct Options {
     std::uint64_t warmup_batches = 0;
     std::uint64_t bandwidth_batches = 0;
@@ -61,6 +72,7 @@ struct Options {
     std::uint64_t latency_iterations = kDefaultLatencyIterations;
     std::uint64_t max_batch_delay_nanoseconds = kDefaultMaxBatchDelayNanoseconds;
     std::uint32_t wr_bytes = 0;
+    BackendKind backend = BackendKind::persistent;
 };
 
 struct BandwidthResult {
@@ -79,8 +91,13 @@ struct LatencyResult {
 
 class ClientDaemonDataService final : public ugdr::control::ControlService {
   public:
-    explicit ClientDaemonDataService(std::uint64_t max_batch_delay_nanoseconds)
+    ClientDaemonDataService(BackendKind backend_kind,
+                            std::uint64_t max_batch_delay_nanoseconds)
         : transport_(kRequestCapacity, kResponseCapacity),
+          backend_kind_(backend_kind),
+          backend_(backend_kind == BackendKind::cuda_batch
+                       ? static_cast<ugdr::worker::CopyBackend *>(&cuda_batch_backend_)
+                       : static_cast<ugdr::worker::CopyBackend *>(&persistent_backend_)),
           max_batch_delay_nanoseconds_(max_batch_delay_nanoseconds) {
     }
 
@@ -140,7 +157,7 @@ class ClientDaemonDataService final : public ugdr::control::ControlService {
 
     [[nodiscard]] bool finished() const noexcept {
         return backend_status_ == 0 &&
-               backend_.state() == ugdr::gpu::PersistentCudaCopyBackendState::stopped &&
+               backend_stopped() &&
                workers_ready() && service_.qp_count() == 0 && service_.cq_count() == 0 &&
                service_.mr_count() == 0 && service_.pd_count() == 0 &&
                service_.context_count() == 0;
@@ -148,6 +165,36 @@ class ClientDaemonDataService final : public ugdr::control::ControlService {
 
     [[nodiscard]] int status() const noexcept {
         return backend_status_;
+    }
+
+    void print_backend_metrics() const {
+        if (backend_kind_ != BackendKind::cuda_batch) {
+            std::printf(
+                "benchmark=client_daemon_cuda_e2e phase=backend_metrics backend=persistent "
+                "batch_size=%zu slot_count=0 profile_sm_active=external "
+                "profile_copy_engine=external\n",
+                ugdr::gpu::kPersistentCudaCopyBackendHostBatch);
+            std::fflush(stdout);
+            return;
+        }
+        const std::uint64_t batches = cuda_batch_backend_.submitted_batches();
+        const double occupancy =
+            batches == 0
+                ? 0.0
+                : static_cast<double>(cuda_batch_backend_.submitted_payloads()) /
+                      static_cast<double>(batches * ugdr::gpu::kCudaBatchCopyBackendMaxBatch);
+        std::printf(
+            "benchmark=client_daemon_cuda_e2e phase=backend_metrics backend=cuda-batch "
+            "batch_size=%zu slot_count=%zu submitted_batches=%llu submitted_payloads=%llu "
+            "batch_occupancy=%.6f event_queries=%llu event_not_ready_queries=%llu "
+            "profile_sm_active=external profile_copy_engine=external\n",
+            ugdr::gpu::kCudaBatchCopyBackendMaxBatch,
+            ugdr::gpu::kCudaBatchCopyBackendSlotCount,
+            static_cast<unsigned long long>(cuda_batch_backend_.submitted_batches()),
+            static_cast<unsigned long long>(cuda_batch_backend_.submitted_payloads()), occupancy,
+            static_cast<unsigned long long>(cuda_batch_backend_.event_queries()),
+            static_cast<unsigned long long>(cuda_batch_backend_.event_not_ready_queries()));
+        std::fflush(stdout);
     }
 
     ugdr::gpu::RuntimeCudaIpcMemoryBackend memory_backend_;
@@ -172,48 +219,85 @@ class ClientDaemonDataService final : public ugdr::control::ControlService {
             backend_status_ = EINVAL;
             return;
         }
-        ugdr::gpu::PersistentCudaCopyBackendConfig config;
-        config.device_ordinal = 0;
-        config.stage_buffer_base = stage_buffer_base_;
-        config.stage_buffer_bytes = stage_buffer_bytes_;
-        config.queue_capacity = kBackendCapacity;
-        config.host_batch = ugdr::gpu::kPersistentCudaCopyBackendHostBatch;
-        config.max_batch_delay_nanoseconds = max_batch_delay_nanoseconds_;
-        backend_status_ = backend_.start(config);
+        if (backend_kind_ == BackendKind::cuda_batch) {
+            ugdr::gpu::CudaBatchCopyBackendConfig config;
+            config.device_ordinal = 0;
+            backend_status_ = cuda_batch_backend_.start(config);
+        } else {
+            ugdr::gpu::PersistentCudaCopyBackendConfig config;
+            config.device_ordinal = 0;
+            config.stage_buffer_base = stage_buffer_base_;
+            config.stage_buffer_bytes = stage_buffer_bytes_;
+            config.queue_capacity = kBackendCapacity;
+            config.host_batch = ugdr::gpu::kPersistentCudaCopyBackendHostBatch;
+            config.max_batch_delay_nanoseconds = max_batch_delay_nanoseconds_;
+            backend_status_ = persistent_backend_.start(config);
+        }
         if (backend_status_ != 0) {
             return;
         }
         requester_ = std::make_unique<ugdr::worker::LoopWorker>(
-            service_, qp_nums[0], transport_, backend_, ugdr::worker::LoopWorkerRole::requester,
+            service_, qp_nums[0], transport_, *backend_, ugdr::worker::LoopWorkerRole::requester,
             kPayloadBytes);
         responder_ = std::make_unique<ugdr::worker::LoopWorker>(
-            service_, qp_nums[1], transport_, backend_, ugdr::worker::LoopWorkerRole::responder,
+            service_, qp_nums[1], transport_, *backend_, ugdr::worker::LoopWorkerRole::responder,
             kPayloadBytes);
     }
 
     void progress_backend_shutdown() {
-        if (backend_.state() == ugdr::gpu::PersistentCudaCopyBackendState::accepting) {
-            backend_status_ = backend_.request_stop();
+        if (backend_accepting()) {
+            backend_status_ = backend_kind_ == BackendKind::cuda_batch
+                                  ? cuda_batch_backend_.request_stop()
+                                  : persistent_backend_.request_stop();
             if (backend_status_ != 0) {
                 return;
             }
         }
-        if (backend_.state() != ugdr::gpu::PersistentCudaCopyBackendState::draining) {
+        if (!backend_draining()) {
             return;
         }
         std::array<ugdr::worker::BackendCompletion, ugdr::gpu::kPersistentCudaCopyBackendHostBatch>
             completions{};
-        while (backend_.try_pop_completion_batch(completions.data(), completions.size()) != 0) {
+        while (backend_->try_pop_completion_batch(completions.data(), completions.size()) != 0) {
         }
-        const int status = backend_.wait();
+        const int status = backend_kind_ == BackendKind::cuda_batch
+                               ? cuda_batch_backend_.wait()
+                               : persistent_backend_.wait();
         if (status != 0 && status != EAGAIN) {
             backend_status_ = status;
         }
     }
 
+    [[nodiscard]] bool backend_stopped() const noexcept {
+        return backend_kind_ == BackendKind::cuda_batch
+                   ? cuda_batch_backend_.state() ==
+                         ugdr::gpu::CudaBatchCopyBackendState::stopped
+                   : persistent_backend_.state() ==
+                         ugdr::gpu::PersistentCudaCopyBackendState::stopped;
+    }
+
+    [[nodiscard]] bool backend_accepting() const noexcept {
+        return backend_kind_ == BackendKind::cuda_batch
+                   ? cuda_batch_backend_.state() ==
+                         ugdr::gpu::CudaBatchCopyBackendState::accepting
+                   : persistent_backend_.state() ==
+                         ugdr::gpu::PersistentCudaCopyBackendState::accepting;
+    }
+
+    [[nodiscard]] bool backend_draining() const noexcept {
+        return backend_kind_ == BackendKind::cuda_batch
+                   ? cuda_batch_backend_.state() ==
+                         ugdr::gpu::CudaBatchCopyBackendState::draining
+                   : persistent_backend_.state() ==
+                         ugdr::gpu::PersistentCudaCopyBackendState::draining;
+    }
+
     ugdr::control::QpService service_{memory_backend_};
     ugdr::worker::LocalTransport transport_;
-    ugdr::gpu::PersistentCudaCopyBackend backend_;
+    BackendKind backend_kind_ = BackendKind::persistent;
+    ugdr::gpu::PersistentCudaCopyBackend persistent_backend_;
+    ugdr::gpu::CudaBatchCopyBackend cuda_batch_backend_;
+    ugdr::worker::CopyBackend *backend_ = nullptr;
     std::uint64_t max_batch_delay_nanoseconds_ = 0;
     int connected_qps_ = 0;
     int backend_status_ = 0;
@@ -223,9 +307,9 @@ class ClientDaemonDataService final : public ugdr::control::ControlService {
     std::unique_ptr<ugdr::worker::LoopWorker> responder_;
 };
 
-int child_main(const std::string &socket_path, int ready_fd,
+int child_main(const std::string &socket_path, int ready_fd, BackendKind backend,
                std::uint64_t max_batch_delay_nanoseconds) {
-    ClientDaemonDataService data(max_batch_delay_nanoseconds);
+    ClientDaemonDataService data(backend, max_batch_delay_nanoseconds);
     if (data.memory_backend_.initialization_status() != 0) {
         const char skipped = 's';
         if (::write(ready_fd, &skipped, 1) != 1) {
@@ -256,6 +340,7 @@ int child_main(const std::string &socket_path, int ready_fd,
             return 23;
         }
         if (data.finished()) {
+            data.print_backend_metrics();
             return 0;
         }
         ++progress_cycles;
@@ -417,7 +502,8 @@ bool parse_options(int argc, char **argv, Options *options) {
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--help") {
-            std::printf("usage: %s [--warmup-batches N] [--bandwidth-batches N] "
+            std::printf("usage: %s [--backend persistent|cuda-batch] "
+                        "[--warmup-batches N] [--bandwidth-batches N] "
                         "[--latency-warmup N] [--latency-iterations N] "
                         "[--max-batch-delay-ns N] [--wr-bytes N]\n",
                         argv[0]);
@@ -426,8 +512,19 @@ bool parse_options(int argc, char **argv, Options *options) {
         if (index + 1 >= argc) {
             return false;
         }
+        const char *const raw_value = argv[++index];
+        if (argument == "--backend") {
+            if (std::strcmp(raw_value, "persistent") == 0) {
+                options->backend = BackendKind::persistent;
+            } else if (std::strcmp(raw_value, "cuda-batch") == 0) {
+                options->backend = BackendKind::cuda_batch;
+            } else {
+                return false;
+            }
+            continue;
+        }
         std::uint64_t value = 0;
-        if (!parse_u64(argv[++index], &value)) {
+        if (!parse_u64(raw_value, &value)) {
             return false;
         }
         if (argument == "--warmup-batches") {
@@ -462,6 +559,7 @@ void terminate_process(pid_t *process) {
 }
 
 int run_benchmark(const Options &options) {
+    const auto process_start = Clock::now();
     char directory_template[] = "/tmp/ugdr-client-daemon-cuda-XXXXXX";
     char *const directory = ::mkdtemp(directory_template);
     if (directory == nullptr) {
@@ -483,7 +581,8 @@ int run_benchmark(const Options &options) {
     if (child == 0) {
         (void)::close(ready_pipe[0]);
         const int result =
-            child_main(socket_path, ready_pipe[1], options.max_batch_delay_nanoseconds);
+            child_main(socket_path, ready_pipe[1], options.backend,
+                       options.max_batch_delay_nanoseconds);
         (void)::close(ready_pipe[1]);
         std::_Exit(result);
     }
@@ -540,7 +639,8 @@ int run_benchmark(const Options &options) {
             cudaMalloc(&target, kMaxWrBytes) != cudaSuccess ||
             cudaMemcpy(source, source_data.data(), source_data.size(), cudaMemcpyHostToDevice) !=
                 cudaSuccess ||
-            cudaMemset(target, 0, kMaxWrBytes) != cudaSuccess) {
+            cudaMemset(target, 0, kMaxWrBytes) != cudaSuccess ||
+            cudaDeviceSynchronize() != cudaSuccess) {
             result = 77;
             break;
         }
@@ -648,7 +748,8 @@ int run_benchmark(const Options &options) {
             }
             std::printf(
                 "benchmark=client_daemon_cuda_e2e phase=bandwidth "
-                "boundary=post_send_to_poll_cq build_type=%s gpu_name=\"%s\" cuda_runtime=%d "
+                "boundary=post_send_to_poll_cq backend=%s batch_size=%zu slot_count=%zu "
+                "build_type=%s gpu_name=\"%s\" cuda_runtime=%d "
                 "cuda_driver=%d l2_cache_bytes=%d wr_bytes=%u payload_bytes=%u "
                 "payloads_per_wr=%llu "
                 "queue_depth=%zu post_chain_length=%zu sq_consume_slots=1 cqe_per_batch=1 "
@@ -658,10 +759,22 @@ int run_benchmark(const Options &options) {
                 "logical_payload_bytes=%llu warmup_seconds=%.6f elapsed_seconds=%.6f "
                 "parent_MWR_per_s=%.6f payload_MTask_per_s=%.6f "
                 "logical_payload_GB_per_s=%.6f correctness_passed=1\n",
+                backend_name(options.backend),
+                options.backend == BackendKind::cuda_batch
+                    ? ugdr::gpu::kCudaBatchCopyBackendMaxBatch
+                    : ugdr::gpu::kPersistentCudaCopyBackendHostBatch,
+                options.backend == BackendKind::cuda_batch
+                    ? ugdr::gpu::kCudaBatchCopyBackendSlotCount
+                    : 0,
                 UGDR_BENCHMARK_BUILD_TYPE, properties.name, runtime_version, driver_version,
                 properties.l2CacheSize, bandwidth.wr_bytes, kPayloadBytes,
                 static_cast<unsigned long long>(payloads_per_wr), kQueueDepth, kQueueDepth,
-                ugdr::gpu::kPersistentCudaCopyBackendHostBatch, kBackendCapacity,
+                options.backend == BackendKind::cuda_batch
+                    ? ugdr::gpu::kCudaBatchCopyBackendMaxBatch
+                    : ugdr::gpu::kPersistentCudaCopyBackendHostBatch,
+                options.backend == BackendKind::cuda_batch
+                    ? ugdr::gpu::kCudaBatchCopyBackendPendingCapacity
+                    : kBackendCapacity,
                 static_cast<unsigned long long>(kControlPollInterval),
                 static_cast<unsigned long long>(options.max_batch_delay_nanoseconds),
                 static_cast<unsigned long long>(bandwidth.warmup_batches),
@@ -681,12 +794,20 @@ int run_benchmark(const Options &options) {
                 latency->samples_us.size();
             std::printf(
                 "benchmark=client_daemon_cuda_e2e phase=latency boundary=post_send_to_poll_cq "
-                "build_type=%s gpu_name=\"%s\" wr_bytes=%u payload_bytes=%u "
+                "backend=%s batch_size=%zu slot_count=%zu build_type=%s "
+                "gpu_name=\"%s\" wr_bytes=%u payload_bytes=%u "
                 "payloads_per_wr=%u queue_depth=1 post_chain_length=1 sq_consume_slots=1 "
                 "cqe_per_wr=1 max_batch_delay_ns=%llu warmup=%llu iterations=%llu "
                 "elapsed_seconds=%.6f samples=%zu latency_min_us=%.3f latency_max_us=%.3f "
                 "latency_avg_us=%.3f latency_p50_us=%.3f latency_p99_us=%.3f "
                 "latency_p99_9_us=%.3f correctness_passed=1\n",
+                backend_name(options.backend),
+                options.backend == BackendKind::cuda_batch
+                    ? ugdr::gpu::kCudaBatchCopyBackendMaxBatch
+                    : ugdr::gpu::kPersistentCudaCopyBackendHostBatch,
+                options.backend == BackendKind::cuda_batch
+                    ? ugdr::gpu::kCudaBatchCopyBackendSlotCount
+                    : 0,
                 UGDR_BENCHMARK_BUILD_TYPE, properties.name, latency->wr_bytes, kPayloadBytes,
                 (latency->wr_bytes + kPayloadBytes - 1) / kPayloadBytes,
                 static_cast<unsigned long long>(options.max_batch_delay_nanoseconds),
@@ -748,6 +869,31 @@ int run_benchmark(const Options &options) {
         }
     }
     (void)::rmdir(directory);
+    if (result == 0) {
+        rusage self_usage{};
+        rusage child_usage{};
+        if (::getrusage(RUSAGE_SELF, &self_usage) == 0 &&
+            ::getrusage(RUSAGE_CHILDREN, &child_usage) == 0) {
+            const auto seconds = [](const timeval &value) {
+                return static_cast<double>(value.tv_sec) +
+                       static_cast<double>(value.tv_usec) / 1'000'000.0;
+            };
+            const double user_seconds =
+                seconds(self_usage.ru_utime) + seconds(child_usage.ru_utime);
+            const double system_seconds =
+                seconds(self_usage.ru_stime) + seconds(child_usage.ru_stime);
+            const double wall_seconds =
+                std::chrono::duration<double>(Clock::now() - process_start).count();
+            const double cpu_percent =
+                wall_seconds == 0.0 ? 0.0 : (user_seconds + system_seconds) / wall_seconds * 100.0;
+            std::printf(
+                "benchmark=client_daemon_cuda_e2e phase=process_metrics backend=%s "
+                "cpu_user_seconds=%.6f cpu_system_seconds=%.6f wall_seconds=%.6f "
+                "cpu_percent=%.3f\n",
+                backend_name(options.backend), user_seconds, system_seconds, wall_seconds,
+                cpu_percent);
+        }
+    }
     return result;
 }
 

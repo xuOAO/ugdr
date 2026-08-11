@@ -116,8 +116,14 @@ target_link_libraries(ugdr_gpu
 )
 
 add_library(ugdr_cuda_backend STATIC
+    src/gpu/cuda_batch_copy_backend.cu
     src/gpu/gpudirect_visibility.cu
     src/gpu/persistent_copy_backend.cu
+)
+set_source_files_properties(
+    src/gpu/cuda_batch_copy_backend.cu
+    PROPERTIES
+        COMPILE_FLAGS "--std=c++20"
 )
 set_source_files_properties(
     src/gpu/gpudirect_visibility.cu

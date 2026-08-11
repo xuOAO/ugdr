@@ -115,6 +115,23 @@ add_test(
         --latency-warmup 1
         --latency-iterations 4
 )
+
+add_test(
+    NAME ugdr_client_daemon_cuda_batch_benchmark_smoke
+    COMMAND ugdr_client_daemon_cuda_benchmark
+        --backend cuda-batch
+        --warmup-batches 1
+        --bandwidth-batches 2
+        --wr-bytes 65536
+        --latency-warmup 1
+        --latency-iterations 4
+)
+set_tests_properties(
+    ugdr_client_daemon_cuda_batch_benchmark_smoke
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30
+)
 set_tests_properties(
     ugdr_client_daemon_cuda_benchmark_smoke
     PROPERTIES
