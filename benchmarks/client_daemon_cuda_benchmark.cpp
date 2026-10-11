@@ -73,6 +73,7 @@ struct Options {
     std::uint64_t max_batch_delay_nanoseconds = kDefaultMaxBatchDelayNanoseconds;
     std::uint32_t wr_bytes = 0;
     BackendKind backend = BackendKind::persistent;
+    std::string daemon_path;
 };
 
 struct BandwidthResult {
@@ -503,6 +504,7 @@ bool parse_options(int argc, char **argv, Options *options) {
         const std::string argument = argv[index];
         if (argument == "--help") {
             std::printf("usage: %s [--backend persistent|cuda-batch] "
+                        "[--daemon PATH] "
                         "[--warmup-batches N] [--bandwidth-batches N] "
                         "[--latency-warmup N] [--latency-iterations N] "
                         "[--max-batch-delay-ns N] [--wr-bytes N]\n",
@@ -513,6 +515,10 @@ bool parse_options(int argc, char **argv, Options *options) {
             return false;
         }
         const char *const raw_value = argv[++index];
+        if (argument == "--daemon") {
+            options->daemon_path = raw_value;
+            continue;
+        }
         if (argument == "--backend") {
             if (std::strcmp(raw_value, "persistent") == 0) {
                 options->backend = BackendKind::persistent;
@@ -546,7 +552,8 @@ bool parse_options(int argc, char **argv, Options *options) {
             return false;
         }
     }
-    return options->latency_iterations != 0;
+    return options->latency_iterations != 0 &&
+           (options->backend != BackendKind::persistent || !options->daemon_path.empty());
 }
 
 void terminate_process(pid_t *process) {
@@ -580,6 +587,20 @@ int run_benchmark(const Options &options) {
     }
     if (child == 0) {
         (void)::close(ready_pipe[0]);
+        if (options.backend == BackendKind::persistent) {
+            const std::string ready_fd = std::to_string(ready_pipe[1]);
+            const std::string max_batch_delay =
+                std::to_string(options.max_batch_delay_nanoseconds);
+            if (::fcntl(ready_pipe[1], F_SETFD, 0) != 0 ||
+                ::setenv("UGDR_DAEMON_READY_FD", ready_fd.c_str(), 1) != 0 ||
+                ::setenv("UGDR_REQUIRE_CUDA", "1", 1) != 0 ||
+                ::setenv("UGDR_MAX_BATCH_DELAY_NS", max_batch_delay.c_str(), 1) != 0) {
+                std::_Exit(18);
+            }
+            ::execl(options.daemon_path.c_str(), options.daemon_path.c_str(), "--socket",
+                    socket_path.c_str(), nullptr);
+            std::_Exit(127);
+        }
         const int result =
             child_main(socket_path, ready_pipe[1], options.backend,
                        options.max_batch_delay_nanoseconds);
@@ -856,6 +877,9 @@ int run_benchmark(const Options &options) {
     (void)::unsetenv("UGDR_DAEMON_SOCKET");
 
     if (result == 0 && cleanup_ok) {
+        if (options.backend == BackendKind::persistent && ::kill(child, SIGTERM) != 0) {
+            result = 9;
+        }
         int child_status = 0;
         if (::waitpid(child, &child_status, 0) != child || !WIFEXITED(child_status) ||
             WEXITSTATUS(child_status) != 0) {
@@ -870,6 +894,13 @@ int run_benchmark(const Options &options) {
     }
     (void)::rmdir(directory);
     if (result == 0) {
+        if (options.backend == BackendKind::persistent) {
+            std::printf(
+                "benchmark=client_daemon_cuda_e2e phase=backend_metrics backend=persistent "
+                "daemon=official batch_size=%zu slot_count=0 profile_sm_active=external "
+                "profile_copy_engine=external\n",
+                ugdr::gpu::kPersistentCudaCopyBackendHostBatch);
+        }
         rusage self_usage{};
         rusage child_usage{};
         if (::getrusage(RUSAGE_SELF, &self_usage) == 0 &&

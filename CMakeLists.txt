@@ -153,6 +153,7 @@ target_link_libraries(ugdr_client
 )
 
 add_executable(ugdr_daemon
+    apps/daemon/data_service.cpp
     apps/daemon/main.cpp
 )
 target_include_directories(ugdr_daemon
@@ -163,6 +164,7 @@ target_link_libraries(ugdr_daemon
     PRIVATE
         ugdr_ipc
         ugdr_control
+        ugdr_cuda_backend
         ugdr_worker
         ugdr_gpu
 )

@@ -127,6 +127,7 @@ set_tests_properties(
 add_test(
     NAME ugdr_client_daemon_cuda_benchmark_smoke
     COMMAND ugdr_client_daemon_cuda_benchmark
+        --daemon $<TARGET_FILE:ugdr_daemon>
         --warmup-batches 1
         --bandwidth-batches 2
         --wr-bytes 65536
@@ -137,6 +138,7 @@ add_test(
 add_test(
     NAME ugdr_client_daemon_cuda_batch_benchmark_smoke
     COMMAND ugdr_client_daemon_cuda_benchmark
+        --daemon $<TARGET_FILE:ugdr_daemon>
         --backend cuda-batch
         --warmup-batches 1
         --bandwidth-batches 2

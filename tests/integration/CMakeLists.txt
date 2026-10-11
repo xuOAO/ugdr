@@ -193,6 +193,29 @@ set_tests_properties(
         TIMEOUT 30
 )
 
+add_executable(ugdr_public_api_cuda_acceptance_test
+    public_api_cuda_acceptance_test.cpp
+)
+target_include_directories(ugdr_public_api_cuda_acceptance_test
+    PRIVATE
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+)
+target_link_libraries(ugdr_public_api_cuda_acceptance_test
+    PRIVATE
+        ugdr_api
+        ugdr_gpu
+)
+add_test(
+    NAME ugdr_public_api_cuda_acceptance
+    COMMAND ugdr_public_api_cuda_acceptance_test $<TARGET_FILE:ugdr_daemon>
+)
+set_tests_properties(
+    ugdr_public_api_cuda_acceptance
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 60
+)
+
 add_executable(ugdr_loop_worker_cuda_batch_test
     loop_worker_cuda_test.cpp
 )

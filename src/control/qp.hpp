@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace ugdr::control {
 
@@ -133,6 +134,7 @@ class QpService final : public PdMrCqService {
     void on_disconnect(ipc::SessionId session_id) noexcept override;
 
     [[nodiscard]] std::size_t qp_count() const noexcept;
+    [[nodiscard]] std::vector<std::uint32_t> worker_qp_nums() const;
     int worker_qp_view(std::uint32_t qp_num, WorkerQpView *view) noexcept;
 
   private:

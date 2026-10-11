@@ -297,10 +297,9 @@ bool LoopWorker::try_request(const control::WorkerQpView &view) {
         const queue::ReceiveWqeHeader *receive = nullptr;
         if (with_immediate) {
             const void *receive_slot = nullptr;
-            if (view.receive_queue->consumer_peek(&receive_slot) != 0) {
-                return loaded;
+            if (view.receive_queue->consumer_peek(&receive_slot) == 0) {
+                receive = static_cast<const queue::ReceiveWqeHeader *>(receive_slot);
             }
-            receive = static_cast<const queue::ReceiveWqeHeader *>(receive_slot);
         }
 
         ResponderInflight parent;
@@ -316,6 +315,9 @@ bool LoopWorker::try_request(const control::WorkerQpView &view) {
         parent.terminal.resize(request.payload_count, 0);
         parent.results.resize(request.payload_count, DatagramResult::success);
         parent.has_receive = receive != nullptr;
+        if (with_immediate && receive == nullptr) {
+            parent.parent_error = DatagramResult::rnr;
+        }
         parent.receive_wr_id = receive == nullptr ? 0 : receive->wr_id;
         parent.byte_length = static_cast<std::uint32_t>(request.parent_total_length);
         const auto inserted =
@@ -359,6 +361,14 @@ bool LoopWorker::try_request(const control::WorkerQpView &view) {
         return true;
     }
 
+    if (parent.parent_error == DatagramResult::rnr) {
+        parent.terminal[request.payload_index] = 1;
+        ++parent.terminal_count;
+        ++parent.next_payload_index;
+        parent.next_payload_offset += request.payload_length;
+        pending_request_.reset();
+        return true;
+    }
     if (pending_backend_request_count_ == pending_backend_requests_.size()) {
         return loaded;
     }
