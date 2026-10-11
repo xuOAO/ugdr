@@ -4,6 +4,7 @@
 
 #include <arpa/inet.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <utility>
@@ -712,6 +713,17 @@ void QpService::on_disconnect(ipc::SessionId session_id) noexcept {
 
 std::size_t QpService::qp_count() const noexcept {
     return qps_.size();
+}
+
+std::vector<std::uint32_t> QpService::worker_qp_nums() const {
+    std::vector<std::uint32_t> qp_nums;
+    qp_nums.reserve(qp_num_index_.size());
+    for (const auto &[qp_num, identity] : qp_num_index_) {
+        (void)identity;
+        qp_nums.push_back(qp_num);
+    }
+    std::sort(qp_nums.begin(), qp_nums.end());
+    return qp_nums;
 }
 
 int QpService::worker_qp_view(std::uint32_t qp_num, WorkerQpView *view) noexcept {

@@ -17,7 +17,8 @@ only for Client-side CUDA allocation export.
 F06-S03 adds `ugdr_cuda_backend` as the production adapter between the dependency-neutral
 Loop Worker `CopyBackend` contract and `ugdr_gpu` persistent-copy primitives. Keeping this
 adapter separate prevents Client-side CUDA memory export users from inheriting the Worker
-data-plane dependency graph.
+data-plane dependency graph. F07-S01 composes that adapter into the official `ugdr_daemon` so the
+reviewed public API path reaches the Persistent Backend without a benchmark-private service.
 
 F04 adds `ugdr_queue` as the shared data-plane layout boundary. It owns versioned SPSC ring
 memory, descriptor slots, and mapping validation; `ugdr_control` creates and transfers those
@@ -74,5 +75,5 @@ these test or benchmark targets is a production target or dependency.
 | `ugdr_gpu` | None |
 | `ugdr_cuda_backend` | `ugdr_gpu`, `ugdr_control`, `ugdr_ipc`, `ugdr_queue`, `ugdr_worker` |
 | `ugdr_client` | `ugdr_api`, `ugdr_control`, `ugdr_ipc`, `ugdr_gpu`, `ugdr_queue` |
-| `ugdr_daemon` | `ugdr_control`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu`, `ugdr_queue` |
+| `ugdr_daemon` | `ugdr_control`, `ugdr_cuda_backend`, `ugdr_ipc`, `ugdr_worker`, `ugdr_gpu`, `ugdr_queue` |
 <!-- END GENERATED: module-boundaries -->

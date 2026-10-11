@@ -260,6 +260,10 @@
     },
     {
       "from": "ugdr_daemon",
+      "to": "ugdr_cuda_backend"
+    },
+    {
+      "from": "ugdr_daemon",
       "to": "ugdr_ipc"
     },
     {

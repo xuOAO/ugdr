@@ -472,14 +472,24 @@ int main() {
 
     if (!post_send(service, requester_endpoint, responder_endpoint, 14, UGDR_WR_RDMA_WRITE_WITH_IMM,
                    UGDR_SEND_SIGNALED, 9) ||
-        !requester.progress_once() || !responder.progress_once() || backend.accepted_count() != 0 ||
-        responder.progress_once() || !post_receive(service, responder_endpoint, 22) ||
-        !drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
+        !drive(requester, responder, backend, ugdr::worker::DatagramResult::success) ||
+        backend.accepted_count() != 0) {
         return 9;
     }
     completions = drain(service, requester_endpoint);
     receive_completions = drain(service, responder_endpoint);
-    if (completions.size() != 1 || completions[0].wr_id != 14 || receive_completions.size() != 1 ||
+    if (completions.size() != 1 || completions[0].wr_id != 14 ||
+        completions[0].status != UGDR_WC_RNR_RETRY_EXC_ERR || !receive_completions.empty() ||
+        !post_receive(service, responder_endpoint, 22) ||
+        !post_send(service, requester_endpoint, responder_endpoint, 16, UGDR_WR_RDMA_WRITE_WITH_IMM,
+                   UGDR_SEND_SIGNALED, 10) ||
+        !drive(requester, responder, backend, ugdr::worker::DatagramResult::success)) {
+        return 10;
+    }
+    completions = drain(service, requester_endpoint);
+    receive_completions = drain(service, responder_endpoint);
+    if (completions.size() != 1 || completions[0].wr_id != 16 ||
+        completions[0].status != UGDR_WC_SUCCESS || receive_completions.size() != 1 ||
         receive_completions[0].wr_id != 22) {
         return 10;
     }
