@@ -37,3 +37,5 @@ This index links only reviewed Feishu design snapshots that are available in the
 - [F06-S02 Persistent Kernel 模型实验与选型](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S02_Persistent_Kernel_模型实验与选型_步骤文档.md)
 - [F06-S03 真实 CUDA Backend 集成与端到端验收](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S03_真实_CUDA_Backend_集成与端到端验收_步骤文档.md)
 - [F06-S04 CUDA Batch Copy Backend 对照实验](F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06-S04_CUDA_Batch_Copy_Backend_对照实验_步骤文档.md)
+- [F07 公开 API 端到端验收功能文档](F07_公开_API_端到端验收/F07_公开_API_端到端验收_功能文档.md)
+- [F07-S01 公开 API 无 Mock 端到端验收闭环](F07_公开_API_端到端验收/F07-S01_公开_API_无_Mock_端到端验收闭环_步骤文档.md)

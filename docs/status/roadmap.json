@@ -20,6 +20,11 @@
       "path": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
       "revision": 78,
       "body_sha256": "d297a62b87112ff563b140ca249bc1d2d01f50943ce0e6a9e1d8801d04788939"
+    },
+    {
+      "path": "docs/v1_docs/F07_公开_API_端到端验收/F07_公开_API_端到端验收_功能文档.md",
+      "revision": 23,
+      "body_sha256": "442e48daf157c0122c5c3f40874ec5757ab51e1514e3db5d91fe808d3116e503"
     }
   ],
   "routes": [
@@ -252,6 +257,20 @@
       "feature": "F06",
       "step": "F06-S04",
       "source": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
+      "next_actions": {
+        "F07": [
+          {
+            "step": "F07-S01",
+            "action": "公开 API 无 Mock 端到端验收闭环"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F07",
+      "step": "F07-S01",
+      "source": "docs/v1_docs/F07_公开_API_端到端验收/F07_公开_API_端到端验收_功能文档.md",
       "next_actions": {}
     }
   ]
