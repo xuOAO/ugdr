@@ -1,4 +1,5 @@
 #include "control/qp.hpp"
+#include "gpu/cuda_batch_copy_backend.hpp"
 #include "gpu/cuda_ipc_memory.hpp"
 #include "gpu/persistent_copy_backend.hpp"
 #include "ipc/ipc.hpp"
@@ -12,6 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -24,6 +26,14 @@
 #include <vector>
 
 namespace {
+
+#if defined(UGDR_TEST_CUDA_BATCH_BACKEND)
+using TestCudaBackend = ugdr::gpu::CudaBatchCopyBackend;
+using TestCudaBackendState = ugdr::gpu::CudaBatchCopyBackendState;
+#else
+using TestCudaBackend = ugdr::gpu::PersistentCudaCopyBackend;
+using TestCudaBackendState = ugdr::gpu::PersistentCudaCopyBackendState;
+#endif
 
 class LoopDataService final : public ugdr::control::ControlService {
   public:
@@ -88,8 +98,7 @@ class LoopDataService final : public ugdr::control::ControlService {
     }
 
     [[nodiscard]] bool finished() const noexcept {
-        return backend_status == 0 &&
-               backend.state() == ugdr::gpu::PersistentCudaCopyBackendState::stopped &&
+        return backend_status == 0 && backend.state() == TestCudaBackendState::stopped &&
                requester != nullptr && responder != nullptr && service.qp_count() == 0 &&
                service.cq_count() == 0 && service.mr_count() == 0 && service.pd_count() == 0 &&
                service.context_count() == 0;
@@ -102,7 +111,7 @@ class LoopDataService final : public ugdr::control::ControlService {
     ugdr::gpu::RuntimeCudaIpcMemoryBackend memory_backend;
     ugdr::control::QpService service;
     ugdr::worker::LocalTransport transport;
-    ugdr::gpu::PersistentCudaCopyBackend backend;
+    TestCudaBackend backend;
 
   private:
     void make_workers_if_ready() {
@@ -124,12 +133,17 @@ class LoopDataService final : public ugdr::control::ControlService {
             backend_status = EINVAL;
             return;
         }
+#if defined(UGDR_TEST_CUDA_BATCH_BACKEND)
+        ugdr::gpu::CudaBatchCopyBackendConfig config;
+        config.device_ordinal = 0;
+#else
         ugdr::gpu::PersistentCudaCopyBackendConfig config;
         config.device_ordinal = 0;
         config.stage_buffer_base = stage_buffer_base;
         config.stage_buffer_bytes = stage_buffer_bytes;
         config.queue_capacity = 64;
         config.max_batch_delay_nanoseconds = 50'000;
+#endif
         backend_status = backend.start(config);
         if (backend_status != 0) {
             return;
@@ -141,14 +155,14 @@ class LoopDataService final : public ugdr::control::ControlService {
     }
 
     void progress_backend_shutdown() {
-        if (backend.state() == ugdr::gpu::PersistentCudaCopyBackendState::accepting) {
+        if (backend.state() == TestCudaBackendState::accepting) {
             const int status = backend.request_stop();
             if (status != 0) {
                 backend_status = status;
                 return;
             }
         }
-        if (backend.state() != ugdr::gpu::PersistentCudaCopyBackendState::draining) {
+        if (backend.state() != TestCudaBackendState::draining) {
             return;
         }
         ugdr::worker::BackendCompletion completion;
@@ -313,7 +327,7 @@ int main() {
     ugdr_cq *receive_cq = nullptr;
     ugdr_qp *requester = nullptr;
     ugdr_qp *responder = nullptr;
-    constexpr std::size_t allocation_size = 256;
+    constexpr std::size_t allocation_size = 600 * 1024;
     std::vector<unsigned char> source_data(allocation_size);
     std::vector<unsigned char> observed(allocation_size);
     for (std::size_t index = 0; index < source_data.size(); ++index) {
@@ -325,7 +339,8 @@ int main() {
             cudaMalloc(&target, allocation_size) != cudaSuccess ||
             cudaMemcpy(source, source_data.data(), source_data.size(), cudaMemcpyHostToDevice) !=
                 cudaSuccess ||
-            cudaMemset(target, 0, allocation_size) != cudaSuccess) {
+            cudaMemset(target, 0, allocation_size) != cudaSuccess ||
+            cudaDeviceSynchronize() != cudaSuccess) {
             result = 77;
             break;
         }
@@ -448,6 +463,42 @@ int main() {
             break;
         }
 
+        constexpr std::size_t large_payload_count = 65;
+        constexpr std::size_t large_write_bytes =
+            large_payload_count * ugdr::worker::LoopWorker::kDefaultPayloadBytes;
+        constexpr std::size_t large_source_offset = 2048;
+        constexpr std::size_t large_target_offset = 4096;
+        ugdr_sge large_sge{static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(source)) +
+                               large_source_offset,
+                           static_cast<std::uint32_t>(large_write_bytes), source_mr->lkey};
+        ugdr_send_wr large_write{};
+        large_write.wr_id = 802;
+        large_write.sg_list = &large_sge;
+        large_write.num_sge = 1;
+        large_write.opcode = UGDR_WR_RDMA_WRITE;
+        large_write.send_flags = UGDR_SEND_SIGNALED;
+        large_write.wr.rdma.remote_addr =
+            static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(target)) +
+            large_target_offset;
+        large_write.wr.rdma.rkey = target_mr->rkey;
+        ugdr_send_wr *bad_large_write = nullptr;
+        if (ugdr_post_send(requester, &large_write, &bad_large_write) != 0 ||
+            bad_large_write != nullptr) {
+            result = 15;
+            break;
+        }
+        ugdr_wc large_completion{};
+        if (poll_until(send_cq, &large_completion) != 1 || large_completion.wr_id != 802 ||
+            large_completion.status != UGDR_WC_SUCCESS ||
+            cudaMemcpy(observed.data(), target, observed.size(), cudaMemcpyDeviceToHost) !=
+                cudaSuccess ||
+            !std::equal(source_data.begin() + large_source_offset,
+                        source_data.begin() + large_source_offset + large_write_bytes,
+                        observed.begin() + large_target_offset)) {
+            result = 16;
+            break;
+        }
+
         ugdr_recv_wr unused_receive{};
         unused_receive.wr_id = 901;
         ugdr_recv_wr *bad_unused_receive = nullptr;
@@ -467,7 +518,7 @@ int main() {
             bad_unused_receive != nullptr ||
             ugdr_post_send(requester, &unsignaled_write, &bad_unsignaled_write) != 0 ||
             bad_unsignaled_write != nullptr) {
-            result = 15;
+            result = 17;
             break;
         }
 
@@ -475,7 +526,7 @@ int main() {
         for (int iteration = 0; iteration < 5000; ++iteration) {
             if (cudaMemcpy(observed.data(), target, observed.size(), cudaMemcpyDeviceToHost) !=
                 cudaSuccess) {
-                result = 16;
+                result = 18;
                 break;
             }
             unaligned_copy_complete = true;
@@ -492,7 +543,7 @@ int main() {
         }
         if (result != 0 || !unaligned_copy_complete) {
             if (result == 0) {
-                result = 17;
+                result = 19;
             }
             break;
         }
@@ -500,7 +551,7 @@ int main() {
         ugdr_wc unexpected{};
         if (ugdr_poll_cq(send_cq, 1, &unexpected) != 0 ||
             ugdr_poll_cq(receive_cq, 1, &unexpected) != 0) {
-            result = 18;
+            result = 20;
             break;
         }
     } while (false);

@@ -25,9 +25,9 @@ REQUIRED_BASE_COMMANDS = (
     "clang-format",
     "clang-tidy",
 )
-CUDA_VERSION_LOWER = (12, 0)
+CUDA_VERSION_MINIMUM = (12, 8)
 CUDA_VERSION_UPPER = (13, 0)
-CUDA_REQUIRED_RANGE = "12 < version < 13"
+CUDA_REQUIRED_RANGE = "12.8 <= version < 13"
 COMMAND_TIMEOUT_SECONDS = 5.0
 
 Which = Callable[[str], Optional[str]]
@@ -152,7 +152,7 @@ def _cuda_check(which: Which, runner: Runner, timeout: float) -> CheckResult:
 
     observed, comparable = parsed
     details["observed_version"] = observed
-    if CUDA_VERSION_LOWER < comparable < CUDA_VERSION_UPPER:
+    if CUDA_VERSION_MINIMUM <= comparable < CUDA_VERSION_UPPER:
         return CheckResult(
             check_id="cuda.toolkit",
             required=True,

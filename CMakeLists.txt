@@ -2,6 +2,18 @@ cmake_minimum_required(VERSION 3.16)
 
 project(UGDR VERSION 0.1.0 LANGUAGES C CXX CUDA)
 
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.8)
+    message(FATAL_ERROR
+        "UGDR requires CUDA Toolkit 12.8 or newer; found ${CMAKE_CUDA_COMPILER_VERSION}"
+    )
+endif()
+
+if(NOT CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0)
+    message(FATAL_ERROR
+        "UGDR requires CUDA Toolkit 12.8 <= version < 13; found ${CMAKE_CUDA_COMPILER_VERSION}"
+    )
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -104,8 +116,14 @@ target_link_libraries(ugdr_gpu
 )
 
 add_library(ugdr_cuda_backend STATIC
+    src/gpu/cuda_batch_copy_backend.cu
     src/gpu/gpudirect_visibility.cu
     src/gpu/persistent_copy_backend.cu
+)
+set_source_files_properties(
+    src/gpu/cuda_batch_copy_backend.cu
+    PROPERTIES
+        COMPILE_FLAGS "--std=c++20"
 )
 set_source_files_properties(
     src/gpu/gpudirect_visibility.cu

@@ -4,13 +4,13 @@ source_token: "Jlk1dR0FloLvT7xdypscwfL0nKh"
 source_url: "https://my.feishu.cn/docx/Jlk1dR0FloLvT7xdypscwfL0nKh"
 source_path: "我的空间 / UGDR / UGDR_v1 设计 / UGDR_v1 版本文档"
 source_title: "UGDR_v1 版本文档"
-source_revision: 130
+source_revision: 137
 doc_type: "version"
 content_mode: "agent"
 review_status: "reviewed"
-synced_at: "2026-07-21T20:16:30+08:00"
+synced_at: "2026-08-11T23:05:27+08:00"
 generated_by: "ugdr-sync-docs-to-md"
-generated_body_sha256: "d0f2b7d6819040523b2aef4958d7c9698d8e24926860e7e72276a6e0a9c9c394"
+generated_body_sha256: "2441212f50157d965b845c9207c04dac956a8391f12365875140b188400a40aa"
 ---
 # UGDR_v1 版本文档
 
@@ -59,7 +59,7 @@ UGDR v1 先解决一个更基础的问题：在不引入真实网络传输的情
 - 状态分离原则：长期有效的规则、当前状态、执行进度和临时计划分别维护。可变状态与进度不得堆入 AGENTS.md；新的 Agent 会话应能结合状态载体、计划记录和 git 历史恢复当前阶段与下一步。
 - 可执行反馈原则：bootstrap、环境诊断、format/lint、build、test 和 smoke check 必须有稳定入口、确定退出状态和可操作的失败信息；关键架构边界优先通过 lint、结构测试或其他机械检查约束。
 - Agent 中立原则：目录、文档、状态和验证脚本构成通用项目 Harness；Codex 配置、Skills 或其他 Agent 专属适配只能作为附加入口，不得成为项目知识或执行能力的唯一载体。
-- 硬件约束：v1 不依赖 RDMA 网卡完成数据路径验证，但版本验收必须使用真实 GPU buffer。
+- 硬件与工具链约束：v1 不依赖 RDMA 网卡完成数据路径验证，但版本验收必须使用真实 GPU buffer；CUDA Toolkit 全局最低版本为 12.8，构建、环境诊断和新增 CUDA 能力均不得使用更低版本。
 - RDMA 语义对齐原则：v1 只提供 RC QP 建连以及 rdma_write、rdma_write_with_imm 所必需的 verbs-like API；在已支持子集内，公开 API、对象关系、术语、QP 状态转换、错误、顺序、signaling 和 completion 语义默认对齐 RDMA/libibverbs。F02 确认具体 API，不宣称完整 ibverbs 兼容；daemon、队列或 GPU 架构导致的有意偏离必须在已审阅设计中显式记录并由专项测试覆盖。MR 注册保持 `ugdr_reg_mr(pd, addr, length, access)` 的 API/ABI 形状和公开 `lkey/rkey` 语义，但 v1 支持能力只覆盖 `cudaMalloc` device allocation 的合法区间；host、managed、CUDA array 与任意 VMM allocation 返回 `EOPNOTSUPP`，该内存类型限制属于版本能力边界。
 - WRITE_WITH_IMM 接收原则：接收端必须向 RQ 预提交可消费的 Receive WR；成功时消费一个 Receive WR，并在 recv_cq 关联的 CQ 中产生携带 immediate data 的 WC；缺少 Receive WR 时产生 RNR 或等价错误。普通 RDMA Write 不消费远端 Receive WR，也不产生远端接收 WC。是否允许零 SGE 等公开契约由 F02 确认，WQE 仅作为内部实现表示。
 - 进程原则：两个 client 分别运行在独立进程中；daemon 管理模块和 loop worker 运行在同一个 daemon 进程中，但保持清晰的逻辑边界。
@@ -183,3 +183,4 @@ flowchart LR
 | 2026-07-20 | 新增 RDMA/libibverbs 语义对齐约束；统一 QP/SQ/RQ/CQ、WR/WC 术语，明确 WQE/CQE 仅为内部表示；修正 QP 与 CQ 关系、Write/Write With Immediate、signaling 和 completion 语义。 | 避免以内部队列术语替代公开 verbs 契约，确保 daemon 与 GPU 实现不改变已支持 RDMA API 的可观察行为。 | 版本范围、约束与原则、整体架构、F02-F07 职责、验收标准、风险项和架构/依赖画板；需重新人工审阅。 |
 | 2026-07-21 | 新增 v1 MR memory-kind 能力约束：公开注册 API/ABI 与 `lkey/rkey` 语义保持不变，只支持 `cudaMalloc` device allocation 合法区间；host、managed、CUDA array 与任意 VMM allocation 返回 `EOPNOTSUPP`。 | daemon 通过 CUDA IPC 打开 Client GPU allocation；host memory 不在 v1 引入第二套共享映射机制。 | 版本约束、F02 契约同步与 F03 MR 实现依据；需重新人工审阅。 |
 | 2026-07-21 | 删除公开 `endpoint_id` 和 endpoint 控制对象；连接信息仅保留 daemon 生命周期内不复用的 `qp_num`。 | 本机 loop worker 是过渡阶段，不让本地寻址辅助字段进入公开 ABI 或约束未来多机连接协议。 | F02-S03 契约、F03 功能与 F03-S05 实现设计；需重新人工审阅。 |
+| 2026-08-11 | 将 v1 CUDA Toolkit 全局最低版本提升为 12.8，构建与环境诊断拒绝更低版本。 | `cudaMemcpyBatchAsync` 自 CUDA 12.8 提供，且现有代码已在 CUDA 12.8 下完成隔离构建验证。 | 版本约束、F01-S03 环境诊断设计、CMake 门禁与环境测试；需重新人工审阅并重新确认实现状态。 |

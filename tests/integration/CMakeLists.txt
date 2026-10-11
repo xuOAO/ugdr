@@ -193,6 +193,38 @@ set_tests_properties(
         TIMEOUT 30
 )
 
+add_executable(ugdr_loop_worker_cuda_batch_test
+    loop_worker_cuda_test.cpp
+)
+target_compile_definitions(ugdr_loop_worker_cuda_batch_test
+    PRIVATE
+        UGDR_TEST_CUDA_BATCH_BACKEND=1
+)
+target_include_directories(ugdr_loop_worker_cuda_batch_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(ugdr_loop_worker_cuda_batch_test
+    PRIVATE
+        ugdr_api
+        ugdr_control
+        ugdr_cuda_backend
+        ugdr_gpu
+        ugdr_ipc
+        ugdr_worker
+)
+add_test(
+    NAME ugdr_loop_worker_cuda_batch
+    COMMAND ugdr_loop_worker_cuda_batch_test
+)
+set_tests_properties(
+    ugdr_loop_worker_cuda_batch
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30
+)
+
 add_executable(ugdr_persistent_copy_test
     persistent_copy_test.cpp
 )
@@ -278,6 +310,28 @@ set_tests_properties(
     PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 30
+)
+
+add_executable(ugdr_cuda_batch_copy_backend_copy_test
+    cuda_batch_copy_backend_copy_test.cpp
+)
+target_include_directories(ugdr_cuda_batch_copy_backend_copy_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+target_link_libraries(ugdr_cuda_batch_copy_backend_copy_test
+    PRIVATE
+        ugdr_cuda_backend
+)
+add_test(
+    NAME ugdr_cuda_batch_copy_backend_copy
+    COMMAND ugdr_cuda_batch_copy_backend_copy_test
+)
+set_tests_properties(
+    ugdr_cuda_batch_copy_backend_copy
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 60
 )
 
 add_test(

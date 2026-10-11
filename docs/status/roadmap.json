@@ -18,8 +18,8 @@
     },
     {
       "path": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
-      "revision": 45,
-      "body_sha256": "d9f5a3587f1b52f508b74a0d546cd74eb836507dacad965f43fa97dd3c2bfa59"
+      "revision": 78,
+      "body_sha256": "d297a62b87112ff563b140ca249bc1d2d01f50943ce0e6a9e1d8801d04788939"
     }
   ],
   "routes": [
@@ -237,6 +237,20 @@
       "version": "v1",
       "feature": "F06",
       "step": "F06-S03",
+      "source": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
+      "next_actions": {
+        "F06": [
+          {
+            "step": "F06-S04",
+            "action": "CUDA Batch Copy Backend 对照实验"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v1",
+      "feature": "F06",
+      "step": "F06-S04",
       "source": "docs/v1_docs/F06_Persistent_GPU_Kernel_与真实_GPU_Copy/F06_Persistent_GPU_Kernel_与真实_GPU_Copy_功能文档.md",
       "next_actions": {}
     }
